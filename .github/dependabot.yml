@@ -6,6 +6,10 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # This version is part of the audited benchmark contract. Upgrade it only
+    # through an explicit compatibility review that updates the contract tests.
+    ignore:
+      - dependency-name: mazebench
     groups:
       python-dependencies:
         patterns: ["*"]
