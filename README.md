@@ -14,6 +14,11 @@ This is an independent community tool, not an official MazeBench project.
 Version `0.x` is an early public research release: run artifacts are designed
 for auditability, but command-line and artifact schemas may still evolve.
 
+![MazeBench Control Center run inspector](docs/images/control-center-overview.png)
+
+_The documentation screenshots use a synthetic, sanitized run. They contain no
+private endpoint, model output, or experiment data._
+
 ## What it provides
 
 - trial launch and live progress from a browser;
@@ -118,6 +123,14 @@ ssh -NT -L 18787:127.0.0.1:8787 your-remote-host
 ```
 
 Then open <http://127.0.0.1:18787> locally.
+
+## Documentation
+
+- [Getting started](docs/getting-started.md): installation through the first trial.
+- [Configure a new experiment](docs/new-experiment.md): every field in **New trial** and its research meaning.
+- [Inspect, replay, and fork runs](docs/inspecting-runs.md): live monitoring, reasoning, compactions, replay, and exports.
+- [Model profiles](docs/model-profiles.md): managed llama.cpp and external OpenAI-compatible endpoints.
+- [Troubleshooting](docs/troubleshooting.md): ports, model connectivity, context limits, and replay setup.
 
 ## Share a run safely
 
