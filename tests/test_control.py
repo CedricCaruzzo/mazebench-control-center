@@ -5,10 +5,39 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mblab.control import CONTEXT_MODES, MODEL_PROFILES, ControlState
+from mblab.control import (
+    CONTEXT_MODES,
+    MODEL_PROFILES,
+    WEB_ROOT,
+    ControlState,
+    content_type_for,
+    web_asset_for,
+)
 
 
 class ControlStateTest(unittest.TestCase):
+    def test_web_assets_are_selected_from_an_explicit_allowlist(self):
+        self.assertEqual(web_asset_for("/"), (WEB_ROOT / "index.html").resolve())
+        self.assertEqual(web_asset_for("/app.js"), (WEB_ROOT / "app.js").resolve())
+        for request_path in (
+            "/unknown.js",
+            "/../pyproject.toml",
+            "/%2e%2e/pyproject.toml",
+            "/app.js%0d%0aX-Injected:%20yes",
+        ):
+            with self.subTest(request_path=request_path):
+                self.assertIsNone(web_asset_for(request_path))
+
+    def test_content_types_come_only_from_a_fixed_registry(self):
+        self.assertEqual(
+            content_type_for(Path("filename\r\nX-Injected: yes.html")),
+            "text/html; charset=utf-8",
+        )
+        self.assertEqual(
+            content_type_for(Path("unknown\r\nX-Injected: yes.extension")),
+            "application/octet-stream",
+        )
+
     def test_control_center_exposes_managed_model_and_context_profiles(self):
         with tempfile.TemporaryDirectory() as directory:
             state = ControlState(Path(directory), Path(directory) / "runs")

@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import mimetypes
 import os
 import shutil
 import subprocess
@@ -58,6 +57,58 @@ def installed_resource(kind: str, name: str | None = None) -> Path:
 
 
 WEB_ROOT = installed_resource("web")
+
+# Public web files are intentionally explicit. Request paths never become
+# filesystem paths, which keeps the local server's boundary small even when it
+# is exposed through SSH forwarding or another reverse tunnel.
+WEB_ASSETS: dict[str, str] = {
+    "/app.js": "app.js",
+    "/favicon.svg": "favicon.svg",
+    "/index.html": "index.html",
+    "/styles.css": "styles.css",
+    "/viewer.css": "viewer.css",
+    "/viewer.html": "viewer.html",
+    "/viewer.js": "viewer.js",
+}
+
+CONTENT_TYPES: dict[str, str] = {
+    ".css": "text/css; charset=utf-8",
+    ".gif": "image/gif",
+    ".html": "text/html; charset=utf-8",
+    ".ico": "image/x-icon",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".js": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".mp4": "video/mp4",
+    ".ogg": "audio/ogg",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".ttf": "font/ttf",
+    ".wasm": "application/wasm",
+    ".webm": "video/webm",
+    ".webp": "image/webp",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+}
+
+
+def web_asset_for(request_path: str) -> Path | None:
+    """Map a URL path to a bundled asset without using it as a file path."""
+    decoded = urllib.parse.unquote(request_path)
+    name = "index.html" if decoded in {"", "/"} else WEB_ASSETS.get(decoded)
+    if not name:
+        return None
+    root = WEB_ROOT.resolve()
+    candidate = (root / name).resolve()
+    return candidate if candidate.parent == root else None
+
+
+def content_type_for(path: Path) -> str:
+    """Return a fixed HTTP media type; never reflect filename text in a header."""
+    return CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
+
 
 MODEL_PROFILES = default_model_profiles(SOURCE_ROOT)
 
@@ -1083,16 +1134,10 @@ class Handler(BaseHTTPRequestHandler):
             self.error_response(500, str(exc))
 
     def serve_static(self, request_path: str) -> None:
-        relative = "index.html" if request_path in {"", "/"} else request_path.lstrip("/")
-        candidate = (WEB_ROOT / relative).resolve()
-        if candidate != WEB_ROOT and WEB_ROOT not in candidate.parents:
+        candidate = web_asset_for(request_path)
+        if candidate is None or not candidate.is_file():
             self.error_response(404, "not found")
             return
-        if not candidate.is_file():
-            if Path(relative).suffix:
-                self.error_response(404, "not found")
-                return
-            candidate = WEB_ROOT / "index.html"
         self.send_file(candidate)
 
     def send_file(self, path: Path, *, allow_range: bool = False) -> None:
@@ -1116,7 +1161,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
         self.send_response(status)
-        self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        self.send_header("Content-Type", content_type_for(path))
         self.send_header("Content-Length", str(end - start + 1))
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Cache-Control", "no-store")
