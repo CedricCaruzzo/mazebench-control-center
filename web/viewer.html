@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>MazeBench official-engine viewer</title>
+  <link rel="stylesheet" href="/viewer.css">
+  <script>window.__MAZEBENCH_PLAY_CONFIG__ = {assetVersion: "0.2.18"};</script>
+  <script src="/official/play-rules.js" defer></script>
+  <script src="/official/play-core.js" defer></script>
+  <script src="/official/play-render-effects.js" defer></script>
+  <script src="/official/play-render-terrain.js" defer></script>
+  <script src="/official/play-render-actors.js" defer></script>
+  <script src="/official/play-render-three.js" defer></script>
+  <script src="/official/play-render-compositor.js" defer></script>
+  <script src="/official/play-render.js" defer></script>
+  <script src="/official/maze-engine.js" defer></script>
+  <script src="/viewer.js?v=20260824-2" defer></script>
+</head>
+<body>
+  <main class="viewer-shell">
+    <div class="viewer-stage" id="viewer-stage">
+      <canvas id="maze-canvas" width="1024" height="768" aria-label="Read-only official MazeBench engine view"></canvas>
+      <div class="viewer-loading" id="viewer-loading">Reconstructing official engine state…</div>
+      <div class="viewer-error" id="viewer-error" hidden></div>
+      <div class="viewer-badge">ISOLATED · CAMERA ONLY</div>
+      <div class="viewer-controls" aria-label="Camera controls">
+        <button type="button" data-camera="left" title="Rotate left (A)">↶</button>
+        <button type="button" data-camera="up" title="Tilt up (W)">↑</button>
+        <button type="button" data-camera="down" title="Tilt down (S)">↓</button>
+        <button type="button" data-camera="right" title="Rotate right (D)">↷</button>
+        <button type="button" data-zoom="out" title="Zoom out">−</button>
+        <button type="button" data-zoom="reset" title="Reset camera">⌂</button>
+        <button type="button" data-zoom="in" title="Zoom in">＋</button>
+        <button type="button" id="viewer-fullscreen" title="Fullscreen">⛶</button>
+      </div>
+      <div class="viewer-status" id="viewer-status">decision —</div>
+    </div>
+  </main>
+</body>
+</html>

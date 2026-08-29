@@ -1,0 +1,28 @@
+# Copy this file to configs/models.local.toml and adapt it to your server.
+# Then start with:
+#   mazebench-control-center control-center --config configs/models.local.toml
+
+[models.local_llamacpp]
+label = "Local llama.cpp model"
+provider = "llama.cpp"
+api_model = "local"
+base_url = "http://127.0.0.1:8080/v1"
+api_key_env = "MAZEBENCH_API_KEY"
+token_count_mode = "llama.cpp"
+thinking_contract = "none"
+context_window = 65536
+launch_command = ["llama-server", "-m", "${MAZEBENCH_MODEL_PATH}", "--alias", "local", "--host", "127.0.0.1", "--port", "8080", "-c", "65536", "--jinja"]
+launch_cwd = ".."
+
+[models.external_openai_compatible]
+label = "Externally managed OpenAI-compatible endpoint"
+provider = "openai-compatible"
+api_model = "replace-with-served-model-id"
+base_url = "http://127.0.0.1:8000/v1"
+api_key_env = "MAZEBENCH_API_KEY"
+# Export this variable before starting the Control Center. Store only its name
+# here; do not put the secret value in this file.
+token_count_mode = "estimate"
+thinking_contract = "none"
+context_window = 65536
+# No launch_command: the endpoint must already be running.

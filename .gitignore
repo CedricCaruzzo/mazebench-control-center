@@ -1,0 +1,37 @@
+# Run artifacts — regenerable, large, and noisy in diffs
+runs/
+*.mp4
+*.webm
+*.jsonl
+
+# Model weights never live in the repo
+models/
+*.gguf
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+configs/*.local.toml
+configs/*.private.toml
+*.pem
+*.key
+
+# Project-owned browser dependencies
+replay/node_modules/
+
+# Local diagnostics and exports
+*.log
+*.public.zip
+dist/
+build/
+*.egg-info/
+
+# macOS
+.DS_Store

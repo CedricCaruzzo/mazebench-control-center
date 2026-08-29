@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible problem in the Control Center.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Before posting, remove credentials, reasoning traces, raw run data, and local paths from logs.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0 or a commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: observation
+    attributes:
+      label: Observation mode
+      options:
+        - Not applicable
+        - ASCII
+        - JSON
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, model server, and browser where relevant.
+      placeholder: macOS 15, Python 3.12, llama.cpp, Chrome
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include the expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Start the Control Center with ...
+        2. Create a trial with ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste only the smallest useful excerpt after removing sensitive material.
+      render: shell

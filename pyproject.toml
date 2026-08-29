@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mazebench-control-center"
+version = "0.1.0"
+description = "Local experiment control, journaling, analysis, and replay for MazeBench"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
+dependencies = [
+  "mazebench==0.2.18",
+  "verifiers @ git+https://github.com/PrimeIntellect-ai/verifiers.git@b3b8f51ed470e3c46c12bb858ad18d257dc50c5e",
+  "httpx>=0.27,<1",
+]
+
+[project.urls]
+Repository = "https://github.com/CedricCaruzzo/mazebench-control-center"
+Issues = "https://github.com/CedricCaruzzo/mazebench-control-center/issues"
+Changelog = "https://github.com/CedricCaruzzo/mazebench-control-center/blob/main/CHANGELOG.md"
+
+[project.scripts]
+mazebench-control-center = "mblab.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"share/mazebench-control-center/web" = [
+  "web/app.js",
+  "web/favicon.svg",
+  "web/index.html",
+  "web/styles.css",
+  "web/viewer.css",
+  "web/viewer.html",
+  "web/viewer.js",
+]
+"share/mazebench-control-center/scripts" = [
+  "scripts/official-level-state.js",
+]
+"share/mazebench-control-center/replay" = [
+  "replay/package.json",
+  "replay/package-lock.json",
+]
+"share/mazebench-control-center/configs" = [
+  "configs/models.example.toml",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

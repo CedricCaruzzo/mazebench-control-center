@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: If you use this software in research, please cite it using this metadata.
+title: MazeBench Control Center
+type: software
+authors:
+  - family-names: Caruzzo
+    given-names: Cédric
+repository-code: https://github.com/CedricCaruzzo/mazebench-control-center
+url: https://github.com/CedricCaruzzo/mazebench-control-center
+version: 0.1.0
+date-released: 2026-08-29
+license: Apache-2.0

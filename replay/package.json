@@ -1,0 +1,11 @@
+{
+  "name": "mazebench-control-center-replay-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pinned browser and renderer dependencies for MazeBench replay",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "playwright-core": "1.55.0",
+    "three": "0.185.1"
+  }
+}

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>MazeBench Control Center</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css?v=20260826-3">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="rail">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div><strong>MazeBench</strong><small>CONTROL CENTER</small></div>
+      </div>
+      <nav aria-label="Primary">
+        <button class="nav-item is-active"><span>⌁</span> Runs</button>
+        <button class="nav-item" data-scroll="analytics"><span>⌗</span> Analytics</button>
+      </nav>
+      <div class="rail-status">
+        <span class="status-dot"></span>
+        <div><b>Control online</b><small id="replay-capability">Checking 3D replay…</small></div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">LOCAL EXPERIMENT OPERATIONS</p>
+          <h1>Control center</h1>
+        </div>
+        <div class="header-actions">
+          <button class="button button-ghost" id="refresh-button">Refresh</button>
+          <button class="button button-primary" id="new-run-button"><span>＋</span> New trial</button>
+        </div>
+      </header>
+
+      <section class="fleet-strip" id="fleet-strip" aria-label="Corpus summary"></section>
+
+      <div class="workspace">
+        <section class="run-browser">
+          <div class="section-head">
+            <div><p class="eyebrow">RUN ARCHIVE</p><h2>Trials</h2></div>
+            <span class="count-pill" id="run-count">0</span>
+          </div>
+          <div class="run-filter">
+            <span>⌕</span><input id="run-search" type="search" placeholder="Filter runs…" autocomplete="off">
+          </div>
+          <div class="run-list" id="run-list"><div class="empty-state">Loading runs…</div></div>
+        </section>
+
+        <section class="run-detail" id="run-detail">
+          <div class="empty-detail">
+            <div class="empty-maze"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <h2>Select a run</h2>
+            <p>Inspect exploration, replay actions, and generate a 3D trajectory.</p>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="new-run-dialog">
+    <form method="dialog" id="new-run-form">
+      <div class="dialog-head">
+        <div><p class="eyebrow">START EXPERIMENT</p><h2>New trial</h2></div>
+        <button class="icon-button" value="cancel" aria-label="Close">×</button>
+      </div>
+      <p class="dialog-copy">Launch the pinned official MazeBench environment with either its ASCII or structured JSON observation contract. The control center starts the selected local model service, waits until it is ready, and then begins the trial.</p>
+      <div class="field-grid">
+        <label class="field field-wide"><span>Model</span><select name="model_profile" id="model-profile" required><option value="local-openai">Local OpenAI-compatible endpoint</option></select><small class="field-help" id="model-help">Configure this endpoint in a local model-profile file.</small></label>
+        <label class="field field-wide"><span>Observation representation</span><select name="observation_mode" id="observation-mode" required><option value="ascii">ASCII · perspective text</option><option value="json">JSON · structured coordinates</option></select><small class="field-help" id="observation-help">Official perspective ASCII track; each game tile is rendered as a character group.</small></label>
+        <label class="field field-wide"><span>Context management</span><select name="context_mode" id="context-mode" required><option value="generic-autocompact">Generic automatic compaction</option><option value="none">Endpoint-managed / no Control Center compaction</option></select><small class="field-help" id="context-help">Neutral model-generated conversation summaries plus the latest four verbatim turns. Complete raw traces remain on disk.</small></label>
+        <label class="field field-wide"><span>Start from</span><select name="fork_parent_run_id" id="fork-parent"><option value="">Clean environment · no parent</option></select><small class="field-help" id="fork-help">Optionally branch from a completed run. The game is replayed and verified before the model continues from the parent’s active context.</small></label>
+        <label class="field field-wide fork-turn-field" id="fork-turn-field"><span>Fork checkpoint <em>parent turn</em></span><input name="fork_turn" id="fork-turn" type="number" min="1" step="1" disabled><small class="field-help">The child inherits state and history through this action. Its action budget below is additional.</small></label>
+        <label class="field"><span>Action budget</span><input name="actions" type="number" min="1" max="100000" value="256" required></label>
+        <label class="field"><span>Temperature</span><input name="temperature" type="number" min="0" max="5" step="0.1" value="0"></label>
+        <label class="field"><span>Start level <em>optional</em></span><input name="level" placeholder="HxI"></label>
+        <label class="field field-wide" id="ascii-character-field"><span>ASCII character set</span><select name="ascii_character_mode" id="ascii-character-mode"><option value="canonical">Default MazeBench characters</option><option value="random">Stable randomized characters</option></select><small class="field-help">Applies only to ASCII observations. Player P and gem G remain fixed in randomized mode.</small></label>
+        <label class="field field-wide" id="ascii-seed-field" hidden><span>Random character seed</span><input name="hide_names_seed" id="ascii-seed" value="1" maxlength="128" autocomplete="off"><small class="field-help">The same seed deterministically produces the same randomized character mapping.</small></label>
+        <label class="thinking-field field-wide unofficial-prompt-toggle">
+          <input name="unofficial_system_prompt" id="unofficial-system-prompt" type="checkbox">
+          <span class="switch" aria-hidden="true"><i></i></span>
+          <span><b>Unofficial system prompt</b><small>Unlock editing for a prompt-intervention experiment. The run will be prominently labeled unofficial and excluded from the official-prompt condition.</small></span>
+        </label>
+        <label class="field field-wide system-prompt-field"><span>System prompt <em id="system-prompt-mode">official · read-only</em></span><textarea name="system_prompt" id="system-prompt" rows="14" readonly spellcheck="false" aria-describedby="system-prompt-help">Loading audited prompt…</textarea><small class="field-help" id="system-prompt-help">This exact system-role text will be sent to the model and saved with the run.</small></label>
+        <label class="thinking-field field-wide">
+          <input name="thinking" id="thinking-toggle" type="checkbox">
+          <span class="switch" aria-hidden="true"><i></i></span>
+          <span><b>Enable model thinking</b><small>Produces a separate reasoning trace before each exact action. This uses a larger generation budget and creates a distinct experimental condition.</small></span>
+        </label>
+        <input type="hidden" name="thinking_budget" value="2048">
+        <label class="field field-wide"><span>Thinking budget <em>tokens per action</em></span><input name="thinking_budget" id="thinking-budget" type="number" min="64" max="32768" step="64" value="2048"><small class="field-help">Only used when thinking is enabled. Larger budgets sharply increase latency and context use.</small></label>
+        <label class="thinking-field field-wide">
+          <input name="preserve_thinking" id="preserve-thinking-toggle" type="checkbox">
+          <span class="switch" aria-hidden="true"><i></i></span>
+          <span><b>Preserve previous thinking verbatim</b><small>When disabled, raw reasoning is still saved and remains eligible for generic compaction, but Qwen does not receive old reasoning blocks verbatim on ordinary turns.</small></span>
+        </label>
+      </div>
+      <div class="callout"><b id="context-callout-title">Audited official engine · generic harness compaction</b><span id="context-callout-copy">MazeBench 0.2.18 supplies the engine, ASCII contract, scoring, and unmodified hosted prompt base. Hidden mode also receives the official native instruction: P is player, G is gem, and all other glyph identities are stable-random. Every run records startup parity checks and both prompt hashes.</span></div>
+      <div class="dialog-actions"><button class="button button-ghost" value="cancel">Cancel</button><button class="button button-primary" id="launch-button" value="default">Launch trial</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="interactions-dialog" class="trace-dialog">
+    <div class="trace-dialog-shell">
+      <div class="dialog-head trace-dialog-head">
+        <div><p class="eyebrow">MODEL CALL JOURNAL</p><h2 id="interactions-title">Reasoning traces</h2></div>
+        <div class="trace-dialog-actions">
+          <button class="button button-ghost" id="refresh-interactions" type="button">Refresh</button>
+          <button class="icon-button" id="close-interactions" type="button" aria-label="Close">×</button>
+        </div>
+      </div>
+      <p class="dialog-copy">Raw local model reasoning is retained for analysis and debugging. Prompt history is stored as lossless deltas.</p>
+      <div class="interaction-list" id="interaction-list"><div class="empty-state">Loading model calls…</div></div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js?v=20260826-3" defer></script>
+</body>
+</html>

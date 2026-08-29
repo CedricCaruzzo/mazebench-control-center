@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and setup help
+    url: https://github.com/CedricCaruzzo/mazebench-control-center/discussions
+    about: Ask usage and environment questions in GitHub Discussions.
+  - name: Security vulnerability
+    url: https://github.com/CedricCaruzzo/mazebench-control-center/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
