@@ -11,7 +11,7 @@ requires-python = ">=3.11,<3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
 dependencies = [
-  "mazebench==0.2.18",
+  "mazebench==0.2.19",
   "verifiers @ git+https://github.com/PrimeIntellect-ai/verifiers.git@b3b8f51ed470e3c46c12bb858ad18d257dc50c5e",
   "httpx>=0.27,<1",
 ]

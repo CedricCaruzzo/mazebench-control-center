@@ -894,11 +894,11 @@ wheels = [
 
 [[package]]
 name = "mazebench"
-version = "0.2.18"
+version = "0.2.19"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/82/13/606bee94999efab663519ea03af854c49134595207c3d85678f3e9d8c373/mazebench-0.2.18.tar.gz", hash = "sha256:3c5db42b82b5d1fcd9a239853b80f2b1b9b840fe67d7fab472a8d2a187bf7569", size = 6375231, upload-time = "2026-08-04T00:44:12.217Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/46/236febd1968f169c0af3dd6e80c52037e38d9de21842bf1439d19e581353/mazebench-0.2.19.tar.gz", hash = "sha256:92c50598557a29d8a8b2dd8131ddff9f99e5e0e2047cb8db53fd439706e7dad4", size = 6369177, upload-time = "2026-08-04T17:33:22.141Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/9b/7910d5c6936aacf15a85231964c50d35430adec70dbaa556a5528ee59e72/mazebench-0.2.18-py3-none-any.whl", hash = "sha256:ccd2eb29ab85a45981b79ccca345c163aff0344953baee22978f0d1f76a98f7c", size = 6766838, upload-time = "2026-08-04T00:44:10.323Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/70/0bf04743d250f60d6f9d0c9dd29b44ba32d1ff898a58de086c4f1ca68720/mazebench-0.2.19-py3-none-any.whl", hash = "sha256:21643f2d7ba346e78ec6aa2376c64322db7435b6c6ca0008d0e800c6b0b39963", size = 6761148, upload-time = "2026-08-04T17:33:19.925Z" },
 ]
 
 [[package]]
@@ -914,7 +914,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "mazebench", specifier = "==0.2.18" },
+    { name = "mazebench", specifier = "==0.2.19" },
     { name = "verifiers", git = "https://github.com/PrimeIntellect-ai/verifiers.git?rev=b3b8f51ed470e3c46c12bb858ad18d257dc50c5e" },
 ]
 
