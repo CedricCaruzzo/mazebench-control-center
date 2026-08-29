@@ -6,6 +6,10 @@ are clearly documented.
 
 ## [Unreleased]
 
+### Added
+
+- Task-oriented user documentation with sanitized guides and screenshots for setup, trial configuration, run inspection, model profiles, and troubleshooting.
+
 ## [0.1.1] - 2026-08-29
 
 ### Security
