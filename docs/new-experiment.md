@@ -18,7 +18,21 @@ treated as presentation preferences.
 | **Start from** | Starts independently or branches from a completed parent run. |
 | **Action budget** | Maximum new actions for a clean trial. For a fork, this is additional to the inherited parent checkpoint—for example, turn 136 plus a budget of 256 can reach 392. |
 | **Temperature** | Sampling temperature sent to the model endpoint. Record it consistently across comparisons. |
+| **Repetitions** | Queues independent trials of the same configuration and runs them sequentially so one local model service is never overloaded. |
+| **Base sampling seed** | Seeds the first repetition; later repetitions increment it by one. The resolved seed is saved with each run. |
 | **Start level** | Optional controlled starting level. Leave empty for the normal benchmark selection. A fork always inherits the parent's level and state. |
+
+## Repeated trials
+
+Use repetitions when one sampled trajectory is not enough evidence. The
+Control Center creates every run up front, executes them sequentially, and
+groups them under one collapsible batch in the archive. Stopping an active
+batch cancels its queued repetitions. Deleting a completed batch moves all of
+its run directories to recoverable trash.
+
+Apart from their sampling seeds, repeated runs receive the same submitted
+configuration. They remain separate run artifacts rather than being averaged
+into a new benchmark score.
 
 ## Observation representation
 

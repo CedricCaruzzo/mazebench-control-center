@@ -28,6 +28,10 @@ class ControlStateTest(unittest.TestCase):
             with self.subTest(request_path=request_path):
                 self.assertIsNone(web_asset_for(request_path))
 
+    def test_hidden_application_views_override_layout_display_rules(self):
+        styles = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
+        self.assertIn("[hidden] { display: none !important; }", styles)
+
     def test_content_types_come_only_from_a_fixed_registry(self):
         self.assertEqual(
             content_type_for(Path("filename\r\nX-Injected: yes.html")),
@@ -90,6 +94,33 @@ class ControlStateTest(unittest.TestCase):
             self.assertFalse(worker_config["hide_names"])
             self.assertEqual(worker_config["hide_names_seed"], "")
             self.assertEqual(job["status"], "queued")
+
+    def test_repetitions_are_queued_as_one_sequential_batch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ControlState(Path(directory), Path(directory) / "runs")
+            with patch("mblab.control.threading.Thread") as thread_class:
+                job = state.start_trial({"actions": 12, "repetitions": 3, "sampling_seed": 7})
+            call = thread_class.call_args
+            self.assertEqual(call.kwargs["target"], state._trial_batch_worker)
+            job_ids, configs = call.kwargs["args"]
+            self.assertEqual(len(job_ids), 3)
+            self.assertEqual([item["sampling_seed"] for item in configs], [7, 8, 9])
+            self.assertEqual(len({item["experiment_id"] for item in configs}), 1)
+            self.assertEqual(len(job["run_ids"]), 3)
+
+    def test_stopping_one_batch_job_cancels_queued_siblings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ControlState(Path(directory), Path(directory) / "runs")
+            with patch("mblab.control.threading.Thread"):
+                first = state.start_trial({"actions": 12, "repetitions": 3})
+            state.jobs[first["id"]]["status"] = "running"
+            state.stop_job(first["id"])
+            statuses = {
+                job["status"]
+                for job in state.jobs.values()
+                if job.get("experiment_id") == first["experiment_id"]
+            }
+            self.assertEqual(statuses, {"stopping", "cancelled"})
 
     def test_trial_ignores_submitted_prompt_without_unofficial_toggle(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -307,6 +338,24 @@ class ControlStateTest(unittest.TestCase):
             state = ControlState(root, runs)
             with self.assertRaisesRegex(ValueError, "running experiment"):
                 state.delete_run("run-live")
+
+    def test_delete_experiment_moves_all_repetitions_to_trash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ControlState(Path(directory), Path(directory) / "runs")
+            for index in (1, 2):
+                run_dir = state.store.root / f"run-repeat-{index}"
+                run_dir.mkdir(parents=True)
+                (run_dir / "run.json").write_text(
+                    json.dumps({
+                        "id": run_dir.name,
+                        "status": "completed",
+                        "config": {"experiment_id": "experiment-example"},
+                    })
+                )
+            result = state.delete_experiment("experiment-example")
+            self.assertEqual(set(result["deleted_runs"]), {"run-repeat-1", "run-repeat-2"})
+            self.assertFalse((state.store.root / "run-repeat-1").exists())
+            self.assertEqual(len(list((state.store.root / ".trash").iterdir())), 2)
 
 
 if __name__ == "__main__":

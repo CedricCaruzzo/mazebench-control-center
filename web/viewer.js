@@ -1,14 +1,18 @@
 (() => {
   const params = new URLSearchParams(location.search);
   const runId = params.get("run") || "";
+  let gameId = params.get("game") || "";
+  let levelId = params.get("level") || "";
   const canvas = document.getElementById("maze-canvas");
   const stage = document.getElementById("viewer-stage");
   const loading = document.getElementById("viewer-loading");
   const errorBox = document.getElementById("viewer-error");
   const statusBox = document.getElementById("viewer-status");
+  const eventBox = document.getElementById("viewer-event");
   let app = null;
   let currentDecision = Math.max(1, Number(params.get("decision")) || 1);
   let requestSerial = 0;
+  let eventTimer = null;
   // The official renderer's own default: almost top-down, but inclined enough
   // for wall height, holes, actors, and shadows to remain visually distinct.
   const DEFAULT_CAMERA_TILT = 0.22;
@@ -76,7 +80,7 @@
     app.render();
   }
 
-  async function replaceState(levelState, renderState) {
+  async function applyReplacement(levelState, renderState) {
     const state = applySnapshot(levelState, renderState);
     app.applyLevelState(state, {
       deferRender: true,
@@ -89,6 +93,25 @@
     app.render();
   }
 
+  async function replaceState(levelState, renderState, transition, serial) {
+    const collected = transition?.collected_this_action?.length || 0;
+    if (collected) {
+      const overlap = structuredClone(renderState);
+      const players = (overlap.actors || []).filter((actor) =>
+        ["player", "circle_player"].includes(actor.type) && !actor.removed
+      );
+      for (const actor of overlap.actors || []) {
+        if (actor.type === "gem" && actor.removed && players.some((player) =>
+          player.x === actor.x && player.y === actor.y && player.elevation === actor.elevation
+        )) actor.removed = false;
+      }
+      await applyReplacement(levelState, overlap);
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      if (serial !== requestSerial) return;
+    }
+    await applyReplacement(levelState, renderState);
+  }
+
   async function showDecision(decision) {
     if (!runId) throw new Error("No run id was supplied to the viewer");
     const serial = ++requestSerial;
@@ -97,11 +120,41 @@
     if (serial !== requestSerial) return;
     const renderState = snapshot.render_state;
     if (!renderState?.level_id) throw new Error("The run has no replayable official render state");
-    const levelState = await json(`/api/play/maze/${encodeURIComponent(renderState.level_id)}`);
+    const snapshotGame = renderState.game_id || snapshot.game_id || "maze";
+    const levelState = await json(`/api/play/${encodeURIComponent(snapshotGame)}/${encodeURIComponent(renderState.level_id)}`);
     if (serial !== requestSerial) return;
     if (!app) await initialize(levelState, renderState);
-    else await replaceState(levelState, renderState);
-    statusBox.textContent = `decision ${snapshot.decision} · ${String(renderState.level_id).replace("level_", "")}`;
+    else await replaceState(levelState, renderState, snapshot.transition, serial);
+    const transition = snapshot.transition;
+    const stateLabel = snapshot.state_index > 0 ? `after action ${snapshot.state_index}/${snapshot.action_count}` : "initial state";
+    const collected = transition?.collected_this_action?.length || 0;
+    statusBox.textContent = `${stateLabel}${transition?.command ? ` · ${transition.command}` : ""} · ${String(renderState.level_id).replace("level_", "")}`;
+    clearTimeout(eventTimer);
+    eventBox.hidden = !collected;
+    eventBox.classList.remove("pulse");
+    if (collected) {
+      eventBox.textContent = `◆ GEM COLLECTED · ${transition.gem_count} TOTAL`;
+      void eventBox.offsetWidth;
+      eventBox.classList.add("pulse");
+      eventTimer = setTimeout(() => { eventBox.hidden = true; }, 1150);
+    }
+    loading.hidden = true;
+    errorBox.hidden = true;
+  }
+
+  async function showRoom(nextGameId, nextLevelId) {
+    if (!nextGameId || !nextLevelId) throw new Error("No world and room were supplied to the viewer");
+    const serial = ++requestSerial;
+    gameId = nextGameId;
+    levelId = nextLevelId;
+    const detail = await json(`/api/worlds/${encodeURIComponent(gameId)}/rooms/${encodeURIComponent(levelId)}`);
+    if (serial !== requestSerial) return;
+    const levelState = detail.level_state;
+    if (!levelState?.levelId) throw new Error("The selected room has no official engine state");
+    const renderState = { actors: levelState.actors || [], terrain_overrides: [], yaw: 0, level_id: levelState.levelId };
+    if (!app) await initialize(levelState, renderState);
+    else await replaceState(levelState, renderState, null, serial);
+    statusBox.textContent = `${detail.world_title} · ${detail.label}`;
     loading.hidden = true;
     errorBox.hidden = true;
   }
@@ -153,6 +206,9 @@
     if (event.data?.type === "mazebench-viewer-decision") {
       showDecision(event.data.decision).catch(showError);
     }
+    if (event.data?.type === "mazebench-viewer-room") {
+      showRoom(event.data.game, event.data.level).catch(showError);
+    }
   });
   window.addEventListener("resize", () => {
     if (!app) return;
@@ -168,5 +224,6 @@
     errorBox.textContent = error.message || String(error);
   }
 
-  showDecision(currentDecision).catch(showError);
+  if (runId) showDecision(currentDecision).catch(showError);
+  else showRoom(gameId, levelId).catch(showError);
 })();

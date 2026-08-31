@@ -16,6 +16,22 @@ The header records the model, representation, benchmark profile, context mode,
 character condition, thinking condition, timestamp, and stop condition. Use
 these labels before comparing two runs.
 
+Repeated trials are grouped under a collapsible batch card. Expand it to open
+an individual run, inspect its resolved sampling seed, or compare completion
+and action counts without filling the archive with unrelated-looking cards.
+
+## Inspect worlds and build drafts
+
+**World viewer** lists the pinned official world and draft worlds stored by
+MazeBench's local authoring workspace. Select a room to inspect its native 3D
+rendering, actor and terrain inventory, adjacent saved rooms, and lossless
+level source without starting a model trial.
+
+**Room builder** embeds MazeBench's native local authoring tool. The pinned
+benchmark world is read-only in this interface; create or duplicate a draft
+before editing. Builder drafts are useful for environment design, but are not
+automatically benchmark-equivalent and are not selectable as official trials.
+
 ## Summary and exploration charts
 
 The summary cards and charts are recomputed from raw actions:

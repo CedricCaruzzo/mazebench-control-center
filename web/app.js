@@ -1,4 +1,4 @@
-const state = { runs: [], jobs: [], selected: null, detail: null, interactions: [], compactions: [], interactionsError: "", selectionSerial: 0, frame: 0, timer: null, asciiZoom: 1, capabilities: {}, worldRooms: [] };
+const state = { runs: [], jobs: [], selected: null, detail: null, interactions: [], compactions: [], interactionsError: "", selectionSerial: 0, frame: 0, timer: null, asciiZoom: 1, capabilities: {}, worldRooms: [], view: "runs", worlds: [], selectedWorld: null, selectedRoom: null, roomDetail: null, worldSerial: 0, experimentExpansion: new Map() };
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
@@ -22,6 +22,54 @@ function toast(message, error = false) {
   clearTimeout(toast.timer); toast.timer = setTimeout(() => el.className = "toast", 3300);
 }
 
+const VIEW_META={runs:["LOCAL EXPERIMENT OPERATIONS","Control center"],worlds:["ENVIRONMENT INSPECTION","World viewer"],builder:["ENVIRONMENT DESIGN","Room builder"]};
+function switchView(view,{updateHash=true}={}){
+  if(!VIEW_META[view])view="runs";state.view=view;
+  $$('[data-app-view]').forEach(section=>section.hidden=section.dataset.appView!==view);
+  $$('[data-view]').forEach(button=>button.classList.toggle("is-active",button.dataset.view===view));
+  $("#page-eyebrow").textContent=VIEW_META[view][0];$("#page-title").textContent=VIEW_META[view][1];
+  $("#new-run-button").hidden=view!=="runs";$("#open-builder-button").hidden=view!=="builder";
+  if(updateHash&&location.hash!==`#${view}`)history.replaceState(null,"",`#${view}`);
+  if(view==="runs"&&!state.selected&&state.runs.length)selectRun(state.runs[0].id,true);
+  if(view==="worlds")refreshWorlds({preserve:true});
+  if(view==="builder"){const frame=$("#builder-frame");if(frame&&!frame.src)frame.src=frame.dataset.src}
+}
+
+function selectedWorld(){return state.worlds.find(world=>world.id===state.selectedWorld)||null}
+async function refreshWorlds({preserve=true}={}){
+  const previousWorld=preserve?state.selectedWorld:null,previousRoom=preserve?state.selectedRoom:null;
+  try{
+    const payload=await api("/api/worlds");state.worlds=payload.worlds||[];
+    const select=$("#world-select");select.innerHTML=state.worlds.map(world=>`<option value="${escapeHtml(world.id)}">${escapeHtml(world.title)} · ${number(world.room_count)} rooms · ${escapeHtml(world.kind)}</option>`).join("");
+    state.selectedWorld=state.worlds.some(world=>world.id===previousWorld)?previousWorld:(state.worlds[0]?.id||null);if(state.selectedWorld)select.value=state.selectedWorld;
+    renderWorldGrid();const world=selectedWorld(),desired=world?.rooms.some(room=>room.id===previousRoom)?previousRoom:world?.default_level_id;
+    if(desired)await selectWorldRoom(desired);else $("#world-room-detail").innerHTML=`<div class="empty-detail"><h2>No rooms</h2></div>`;
+  }catch(error){$("#world-room-grid").innerHTML=`<div class="empty-state">${escapeHtml(error.message)}</div>`;toast(error.message,true)}
+}
+function renderWorldGrid(){
+  const world=selectedWorld(),grid=$("#world-room-grid"),summary=$("#world-summary"),query=$("#world-room-search")?.value.trim().toLowerCase()||"";if(!world){grid.innerHTML=`<div class="empty-state">No MazeBench worlds found.</div>`;return}
+  $("#world-room-count").textContent=number(world.room_count);summary.innerHTML=`<b>${escapeHtml(world.kind==="official"?"Pinned official world":"Local builder draft")}</b><span>${number(world.width)} × ${number(world.height)} allocation · ${number(world.room_count)} saved rooms</span>`;
+  grid.style.gridTemplateColumns=`repeat(${Math.max(1,Number(world.width)||1)},minmax(15px,1fr))`;
+  grid.innerHTML=world.rooms.map(room=>{const match=!query||room.label.toLowerCase().includes(query)||room.id.toLowerCase().includes(query);return `<button class="world-room-cell${room.id===state.selectedRoom?" is-active":""}${match?"":" is-filtered"}" style="grid-column:${room.column+1};grid-row:${room.row+1}" data-world-room="${escapeHtml(room.id)}" title="${escapeHtml(room.id)}">${escapeHtml(room.label)}</button>`}).join("");
+  $$('[data-world-room]',grid).forEach(button=>button.onclick=()=>selectWorldRoom(button.dataset.worldRoom));
+}
+function countRows(values){const rows=Object.entries(values||{});return rows.length?rows.map(([name,count])=>`<div class="room-count-row"><span>${escapeHtml(name.replaceAll("_"," "))}</span><b>${number(count)}</b></div>`).join(""):`<div class="room-count-row"><span>none</span><b>0</b></div>`}
+async function selectWorldRoom(levelId){
+  const world=selectedWorld();if(!world||!levelId)return;const serial=++state.worldSerial;state.selectedRoom=levelId;renderWorldGrid();
+  $("#world-room-detail").innerHTML=`<div class="empty-detail"><p>Parsing ${escapeHtml(world.id)}/${escapeHtml(levelId)} through the native engine…</p></div>`;
+  try{const detail=await api(`/api/worlds/${encodeURIComponent(world.id)}/rooms/${encodeURIComponent(levelId)}`);if(serial!==state.worldSerial)return;state.roomDetail=detail;renderWorldRoom(detail)}catch(error){if(serial!==state.worldSerial)return;$("#world-room-detail").innerHTML=`<div class="empty-detail"><h2>Room unavailable</h2><p>${escapeHtml(error.message)}</p></div>`;toast(error.message,true)}
+}
+function renderWorldRoom(room){
+  const world=selectedWorld(),rooms=world?.rooms||[],index=rooms.findIndex(item=>item.id===room.level_id),previous=rooms[index-1]?.id,next=rooms[index+1]?.id,mechanics=room.mechanics?.length?room.mechanics.map(item=>`<span class="mechanic-chip">${escapeHtml(item.name)} <b>${number(item.count)}</b></span>`).join(""):`<span class="mechanic-chip is-quiet">floor and walls only</span>`,edit=room.editable?`<button class="button button-primary" id="edit-world-room">Edit this room</button>`:`<button class="button button-ghost" id="open-world-builder">Create a draft</button>`;
+  $("#world-room-detail").innerHTML=`<div class="world-detail-wrap"><header class="world-detail-hero"><div><p class="eyebrow">${escapeHtml(room.world_kind)} WORLD · ${escapeHtml(room.source_file)}</p><div class="detail-title-row"><h2>${escapeHtml(room.world_title)} · ${escapeHtml(room.label)}</h2><span class="lineage ${room.editable?"fork":"official"}">${room.editable?"editable draft":"read only"}</span></div><p class="detail-sub">${number(room.width)} × ${number(room.height)} cells · SHA-256 ${escapeHtml(room.source_sha256.slice(0,12))}</p></div><div class="detail-actions"><button class="button button-ghost" id="previous-world-room" ${previous?"":"disabled"}>← Previous</button><button class="button button-ghost" id="next-world-room" ${next?"":"disabled"}>Next →</button>${edit}</div></header>
+    <div class="world-analysis-grid"><section class="panel world-engine-panel"><div class="panel-head"><div><p class="eyebrow">NATIVE ENGINE</p><h3>Interactive room view</h3></div><p>camera only · no experiment</p></div><div class="world-viewer-box"><iframe title="${escapeHtml(room.label)} engine view" src="/viewer.html?game=${encodeURIComponent(room.game_id)}&level=${encodeURIComponent(room.level_id)}" allow="fullscreen"></iframe></div></section>
+    <aside class="world-analysis-side"><section class="panel"><div class="panel-head"><div><p class="eyebrow">ROOM INVENTORY</p><h3>Mechanics</h3></div><p>${number((room.mechanics||[]).length)} types</p></div><div class="panel-body"><div class="mechanic-list">${mechanics}</div><div class="room-count-columns"><div><small>ACTORS</small>${countRows(room.actor_counts)}</div><div><small>TERRAIN / LAYERS</small>${countRows(room.terrain_counts)}</div></div></div></section><section class="panel"><div class="panel-head"><div><p class="eyebrow">CONNECTIVITY</p><h3>Adjacent saved rooms</h3></div></div><div class="neighbor-list">${room.neighbors?.length?room.neighbors.map(item=>`<button data-neighbor="${escapeHtml(item.room)}"><span>${escapeHtml(item.direction)}</span><b>${escapeHtml(shortRoom(item.room))}</b></button>`).join(""):`<span class="empty-inline">No orthogonal mapped neighbor</span>`}</div></section></aside></div>
+    <section class="panel room-source-panel"><div class="panel-head"><div><p class="eyebrow">LOSSLESS LEVEL SOURCE</p><h3>Builder cell grid</h3></div><p>${escapeHtml(room.source_file)}</p></div><pre>${escapeHtml(room.raw_text)}</pre></section></div>`;
+  if(previous)$("#previous-world-room").onclick=()=>selectWorldRoom(previous);if(next)$("#next-world-room").onclick=()=>selectWorldRoom(next);$$('[data-neighbor]').forEach(button=>button.onclick=()=>selectWorldRoom(button.dataset.neighbor));
+  const open=()=>openBuilder(room.editable?`/maze/author/${encodeURIComponent(room.game_id)}/${encodeURIComponent(room.level_id)}`:"/maze/build");if($("#edit-world-room"))$("#edit-world-room").onclick=open;if($("#open-world-builder"))$("#open-world-builder").onclick=open;
+}
+function openBuilder(path="/maze/build"){switchView("builder");const frame=$("#builder-frame");frame.src=path;$("#open-builder-button").href=path}
+
 async function refresh({quiet=false} = {}) {
   try {
     const previousReplay = latestJob("replay", state.selected);
@@ -31,7 +79,7 @@ async function refresh({quiet=false} = {}) {
     const running = new Map(jobs.filter(job => ["queued","running","stopping"].includes(job.status)).map(job => [job.run_id, job]));
     state.runs.forEach(run => { if (running.has(run.id) && running.get(run.id).kind === "trial") run.status = running.get(run.id).status; });
     renderFleet(); renderRunList(); renderCapability();
-    if (!state.selected && state.runs.length) await selectRun(state.runs[0].id, true);
+    if (!state.selected && state.runs.length && state.view === "runs") await selectRun(state.runs[0].id, true);
     if (state.selected) {
       const selectedRun = state.runs.find(run => run.id === state.selected);
       const active = jobs.some(job => job.run_id === state.selected && ["queued","running","stopping"].includes(job.status));
@@ -82,22 +130,40 @@ function renderFleet() {
 }
 
 function effectiveRunStatus(run) { return run.status || "incomplete"; }
+function runSearchText(run){return `${run.id} ${run.config?.model_label||run.config?.model||""} ${run.config?.observation_mode||""} ${run.config?.sampling_seed??""}`.toLowerCase()}
+function archiveRuns(){
+  const runs=[...state.runs],known=new Set(runs.map(run=>run.id));
+  for(const job of state.jobs.filter(item=>item.kind==="trial"&&item.experiment_id&&!known.has(item.run_id))){
+    const sibling=runs.find(run=>run.config?.experiment_id===job.experiment_id);
+    runs.push({id:job.run_id,status:job.status,created_at:job.created_at,placeholder:true,config:{...(sibling?.config||{}),experiment_id:job.experiment_id,repeat_index:job.repeat_index,repeat_count:job.repeat_count,sampling_seed:job.sampling_seed,model_label:job.model_label||sibling?.config?.model_label},metrics:{summary:{actions:0,rooms_visited:0,novelty_rate:0}}});
+  }
+  return runs;
+}
+function archiveEntries(runs){
+  const entries=[],groups=new Map();
+  for(const run of runs){const id=run.config?.experiment_id,count=Number(run.config?.repeat_count||1);if(id&&count>1){let group=groups.get(id);if(!group){group={kind:"experiment",id,runs:[],created_at:run.created_at};groups.set(id,group);entries.push(group)}group.runs.push(run);if(String(run.created_at||"")>String(group.created_at||""))group.created_at=run.created_at}else entries.push({kind:"run",run,created_at:run.created_at})}
+  for(const group of groups.values())group.runs.sort((a,b)=>Number(a.config?.repeat_index||0)-Number(b.config?.repeat_index||0));
+  return entries.sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
+}
+function renderRunCard(run,{child=false}={}){const m=run.metrics?.summary||{},status=effectiveRunStatus(run),repeat=Number(run.config?.repeat_index||0),count=Number(run.config?.repeat_count||0),seed=run.config?.sampling_seed,title=child?`Repeat ${repeat}/${count} · seed ${seed??"?"}`:run.id,disabled=run.placeholder?" disabled aria-disabled=\"true\"":"",data=run.placeholder?"":` data-run-id="${escapeHtml(run.id)}"`;return `<button class="run-card${child?" is-child":""}${state.selected===run.id?" is-active":""}"${data}${disabled}><div class="run-card-head"><h3>${escapeHtml(title)}</h3><span class="badge ${escapeHtml(status)}">${escapeHtml(status)}</span></div><div class="run-card-meta"><span>${child?escapeHtml(run.id):escapeHtml(run.config?.model_label||run.config?.model||"local")}</span><span>${dateText(run.created_at)}</span></div><div class="run-card-stats"><span><b>${number(m.actions)}</b><small>actions</small></span><span><b>${number(m.rooms_visited)}</b><small>rooms</small></span><span><b>${Math.round(Number(m.novelty_rate||0)*100)}%</b><small>novelty</small></span></div></button>`}
+function experimentView(group,query){
+  const runs=group.runs,total=Math.max(...runs.map(run=>Number(run.config?.repeat_count||1))),statuses=runs.map(effectiveRunStatus),active=statuses.some(status=>["queued","running","stopping"].includes(status)),completed=statuses.filter(status=>status==="completed").length,failed=statuses.filter(status=>status==="failed").length,real=runs.filter(run=>!run.placeholder),meanActions=real.length?real.reduce((sum,run)=>sum+Number(run.metrics?.summary?.actions||0),0)/real.length:0,first=real[0]||runs[0],title=`${first.config?.model_label||first.config?.model||"Model"} · ${(first.config?.observation_mode||"ascii").toUpperCase()}`,seeds=runs.map(run=>Number(run.config?.sampling_seed)).filter(Number.isFinite).sort((a,b)=>a-b),seedLabel=seeds.length?(seeds[0]===seeds.at(-1)?String(seeds[0]):`${seeds[0]}–${seeds.at(-1)}`):"?",groupStatus=active?(statuses.includes("stopping")?"stopping":statuses.includes("running")?"running":"queued"):failed?"failed":completed>=total?"completed":"incomplete",groupText=`${group.id} ${title} ${seeds.join(" ")}`.toLowerCase(),matched=runs.filter(run=>runSearchText(run).includes(query));
+  if(query&&!groupText.includes(query)&&!matched.length)return "";const visible=query&&!groupText.includes(query)?matched:runs,stored=state.experimentExpansion.get(group.id),expanded=query?true:stored===undefined?active||runs.some(run=>run.id===state.selected):stored,canDelete=state.capabilities.experiment_batch_delete===true&&!active&&real.length>0;
+  return `<section class="experiment-group${expanded?" is-expanded":""}"><div class="experiment-card"><button class="experiment-toggle" data-experiment-toggle="${escapeHtml(group.id)}" aria-expanded="${expanded}"><span class="experiment-caret">›</span><span class="experiment-identity"><b>${escapeHtml(title)}</b><small>${escapeHtml(group.id)}</small></span><span class="badge ${escapeHtml(groupStatus)}">${escapeHtml(groupStatus)}</span></button>${canDelete?`<button class="experiment-delete" data-delete-experiment="${escapeHtml(group.id)}" title="Delete batch">×</button>`:""}</div><div class="experiment-summary"><span><b>${number(total)}</b> trials</span><span><b>${number(completed)}</b> completed</span><span><b>${number(failed)}</b> failed</span><span>seeds <b>${escapeHtml(seedLabel)}</b></span><span>mean <b>${meanActions.toFixed(1)}</b> actions</span></div><div class="experiment-runs"${expanded?"":" hidden"}>${visible.map(run=>renderRunCard(run,{child:true})).join("")}</div></section>`;
+}
 function renderRunList() {
   const query = $("#run-search").value.toLowerCase();
-  const runs = state.runs.filter(run => `${run.id} ${run.config?.model || ""}`.toLowerCase().includes(query));
+  const runs=archiveRuns(),entries=archiveEntries(runs),html=entries.map(entry=>entry.kind==="experiment"?experimentView(entry,query):runSearchText(entry.run).includes(query)?renderRunCard(entry.run):"").join("");
   $("#run-count").textContent = runs.length;
-  $("#run-list").innerHTML = runs.length ? runs.map(run => { const m=run.metrics.summary; const status=effectiveRunStatus(run); return `
-    <button class="run-card${state.selected===run.id?" is-active":""}" data-run-id="${escapeHtml(run.id)}">
-      <div class="run-card-head"><h3>${escapeHtml(run.id)}</h3><span class="badge ${escapeHtml(status)}">${escapeHtml(status)}</span></div>
-      <div class="run-card-meta"><span>${escapeHtml(run.config?.model_label || run.config?.model || "local")}</span><span>${dateText(run.created_at)}</span></div>
-      <div class="run-card-stats"><span><b>${number(m.actions)}</b><small>actions</small></span><span><b>${m.rooms_visited}</b><small>rooms</small></span><span><b>${Math.round(m.novelty_rate*100)}%</b><small>novelty</small></span></div>
-    </button>`; }).join("") : `<div class="empty-state">No matching trials.</div>`;
+  $("#run-list").innerHTML = html||`<div class="empty-state">No matching trials.</div>`;
+  $$('[data-experiment-toggle]').forEach(button=>button.onclick=()=>{const id=button.dataset.experimentToggle;state.experimentExpansion.set(id,button.getAttribute("aria-expanded")!=="true");renderRunList()});
+  $$('[data-delete-experiment]').forEach(button=>button.onclick=()=>deleteExperiment(button.dataset.deleteExperiment));
   $$("[data-run-id]").forEach(button => button.onclick = () => selectRun(button.dataset.runId));
 }
 
 async function selectRun(runId, quiet=false) {
   const serial=++state.selectionSerial,oldChat=$("#reasoning-chat"),chatScroll=oldChat?{top:oldChat.scrollTop,pinned:oldChat.scrollHeight-oldChat.scrollTop-oldChat.clientHeight<36}:null;
-  state.selected = runId; renderRunList();
+  state.selected = runId;const selectedRun=state.runs.find(run=>run.id===runId),experimentId=selectedRun?.config?.experiment_id;if(experimentId&&Number(selectedRun.config?.repeat_count||1)>1)state.experimentExpansion.set(experimentId,true);renderRunList();
   if (!quiet) $("#run-detail").innerHTML = `<div class="empty-detail"><p>Loading ${escapeHtml(runId)}…</p></div>`;
   try {
     const [detail,journal]=await Promise.all([
@@ -251,6 +317,7 @@ function drawWorldMap(canvas,visited){if(!canvas)return;const {ctx,w,h}=canvasSi
 
 async function generateReplay(){if(latestJob("replay",state.selected)?.status?.match(/^(queued|running)$/))return;try{const job=await api(`/api/runs/${encodeURIComponent(state.selected)}/replay`,{method:"POST",body:"{}"});state.jobs=state.jobs.filter(item=>item.id!==job.id);state.jobs.push(job);toast("3D replay job started");renderDetail()}catch(error){toast(error.message,true)}}
 async function deleteCurrentRun(){const runId=state.selected;if(!confirm(`Delete ${runId}?\n\nThe run will be moved to runs/.trash and can be recovered manually.`))return;try{await api(`/api/runs/${encodeURIComponent(runId)}`,{method:"DELETE"});state.selected=null;state.detail=null;toast(`Moved ${runId} to trash`);await refresh({quiet:true})}catch(error){toast(error.message,true)}}
+async function deleteExperiment(experimentId){const runs=state.runs.filter(run=>run.config?.experiment_id===experimentId);if(!confirm(`Delete this batch?\n\nAll ${runs.length} stored trial runs will be moved to runs/.trash and can be recovered manually.`))return;try{const result=await api(`/api/experiments/${encodeURIComponent(experimentId)}`,{method:"DELETE"});if(runs.some(run=>run.id===state.selected)){state.selected=null;state.detail=null}state.experimentExpansion.delete(experimentId);toast(`Moved ${result.deleted_runs.length} trial runs to trash`);await refresh({quiet:true})}catch(error){toast(error.message,true)}}
 async function openLog(){try{const {log}=await api(`/api/runs/${encodeURIComponent(state.selected)}/log`);const win=window.open("","_blank");win.document.write(`<title>${escapeHtml(state.selected)} log</title><body style="background:#0b0e0d;color:#dce7dc;padding:24px"><pre style="white-space:pre-wrap;font:12px/1.5 monospace">${escapeHtml(log)}</pre></body>`)}catch(error){toast(error.message,true)}}
 function interactionMessage(row){return row.response?.choices?.[0]?.message||{}}
 function interactionReasoning(message){for(const key of ["reasoning_content","reasoning"]){if(typeof message?.[key]==="string")return message[key]}return message?.reasoning_details?JSON.stringify(message.reasoning_details,null,2):""}
@@ -269,7 +336,10 @@ async function loadInteractions(){const list=$("#interaction-list");list.innerHT
 async function openInteractions(){$("#interactions-title").textContent=`Reasoning traces · ${state.selected}`;$("#interactions-dialog").showModal();await loadInteractions()}
 async function stopCurrentRun(){const job=state.jobs.find(j=>j.run_id===state.selected&&j.kind==="trial"&&["queued","running","stopping"].includes(j.status));if(!job)return toast("No live process found",true);try{await api(`/api/jobs/${encodeURIComponent(job.id)}/stop`,{method:"POST",body:"{}"});toast("Stopping trial…")}catch(error){toast(error.message,true)}}
 
-$("#new-run-button").onclick=()=>{renderTrialOptions();updateSystemPromptControls({reset:true});$("#new-run-dialog").showModal()}; $("#refresh-button").onclick=()=>refresh(); $("#run-search").oninput=renderRunList;
+$("#new-run-button").onclick=()=>{renderTrialOptions();$("#trial-repetitions").value="1";updateSystemPromptControls({reset:true});$("#new-run-dialog").showModal()}; $("#refresh-button").onclick=()=>{if(state.view==="worlds")refreshWorlds({preserve:true});else if(state.view==="builder"){const frame=$("#builder-frame");frame.src=frame.src}else refresh()}; $("#run-search").oninput=renderRunList;
+$$('[data-view]').forEach(button=>button.onclick=()=>switchView(button.dataset.view));
+$("#world-select").onchange=()=>{state.selectedWorld=$("#world-select").value;state.selectedRoom=null;renderWorldGrid();const world=selectedWorld();if(world?.default_level_id)selectWorldRoom(world.default_level_id)};
+$("#world-room-search").oninput=renderWorldGrid;
 $("#fork-parent").onchange=updateForkControls;
 $("#model-profile").onchange=updateModelControls;
 $("#context-mode").onchange=updateContextControls;
@@ -278,7 +348,7 @@ $("#ascii-character-mode").onchange=updateObservationControls;
 $("#ascii-seed").oninput=()=>updateSystemPromptControls();
 $("#unofficial-system-prompt").onchange=()=>updateSystemPromptControls();
 $("#close-interactions").onclick=()=>$("#interactions-dialog").close(); $("#refresh-interactions").onclick=loadInteractions;
-$("#new-run-form").onsubmit=async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();if(!supportsExperimentControls()){toast("Restart the Control Center before launching with the new experiment controls",true);return}const form=new FormData(event.currentTarget),config=Object.fromEntries(form),parent=$("#fork-parent").value;config.actions=Number(config.actions);config.temperature=Number(config.temperature);config.ascii_character_mode=$("#ascii-character-mode").value;config.hide_names=config.observation_mode==="ascii"&&config.ascii_character_mode==="random";config.hide_names_seed=config.hide_names?$("#ascii-seed").value:"";config.thinking=form.has("thinking");config.thinking_budget=Number(config.thinking_budget);config.preserve_thinking=form.has("preserve_thinking");config.unofficial_system_prompt=$("#unofficial-system-prompt").checked;config.system_prompt=$("#system-prompt").value;config.fork_parent_run_id=parent;if(parent)config.fork_turn=Number($("#fork-turn").value);else{delete config.fork_turn;config.level=$("[name='level']").value}try{$("#launch-button").disabled=true;const job=await api("/api/runs",{method:"POST",body:JSON.stringify(config)});$("#new-run-dialog").close();state.jobs.push(job);toast(parent?`Started fork ${job.run_id}`:`Started ${job.run_id}`);await refresh({quiet:true});await selectRun(job.run_id)}catch(error){toast(error.message,true)}finally{$("#launch-button").disabled=!supportsExperimentControls()}};
+$("#new-run-form").onsubmit=async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();if(!supportsExperimentControls()){toast("Restart the Control Center before launching with the new experiment controls",true);return}const form=new FormData(event.currentTarget),config=Object.fromEntries(form),parent=$("#fork-parent").value;config.actions=Number(config.actions);config.temperature=Number(config.temperature);config.repetitions=Number(config.repetitions);config.sampling_seed=Number(config.sampling_seed);config.ascii_character_mode=$("#ascii-character-mode").value;config.hide_names=config.observation_mode==="ascii"&&config.ascii_character_mode==="random";config.hide_names_seed=config.hide_names?$("#ascii-seed").value:"";config.thinking=form.has("thinking");config.thinking_budget=Number(config.thinking_budget);config.preserve_thinking=form.has("preserve_thinking");config.unofficial_system_prompt=$("#unofficial-system-prompt").checked;config.system_prompt=$("#system-prompt").value;config.fork_parent_run_id=parent;if(parent)config.fork_turn=Number($("#fork-turn").value);else{delete config.fork_turn;config.level=$("[name='level']").value}const seedEnd=config.sampling_seed+config.repetitions-1;if(!confirm(`Launch ${config.repetitions} sequential trial${config.repetitions===1?"":"s"}?\n\nSampling seed${config.repetitions===1?"":"s"}: ${config.sampling_seed}${seedEnd!==config.sampling_seed?`–${seedEnd}`:""}\n${config.actions} actions each · ${String(config.observation_mode).toUpperCase()}`))return;try{$("#launch-button").disabled=true;const job=await api("/api/runs",{method:"POST",body:JSON.stringify(config)});$("#new-run-dialog").close();state.jobs.push(job);toast(config.repetitions>1?`Queued ${config.repetitions} sequential trials`:parent?`Started fork ${job.run_id}`:`Started ${job.run_id}`);await refresh({quiet:true});await selectRun(job.run_id)}catch(error){toast(error.message,true)}finally{$("#launch-button").disabled=!supportsExperimentControls()}};
 $$('[data-scroll="analytics"]').forEach(button=>button.onclick=()=>$("#analytics")?.scrollIntoView({behavior:"smooth"}));
 window.addEventListener("resize",()=>{if(!state.detail)return;requestAnimationFrame(()=>{const run=state.detail,timeline=run.metrics.timeline;drawLineChart($("#novelty-chart"),[{color:"#c8f26b",values:timeline.map(x=>x.novelty_rolling)}],1);drawLineChart($("#progress-chart"),[{color:"#66d9cf",values:timeline.map(x=>x.rooms_visited)},{color:"#f3a85e",values:timeline.map(x=>x.gems)}]);drawWorldMap($("#world-map"),run.metrics.rooms);renderFrame()})});
-refresh({quiet:true}); setInterval(()=>{if(state.jobs.some(job=>["queued","running","stopping"].includes(job.status)))refresh({quiet:true})},2500);
+switchView(location.hash.slice(1)||"runs",{updateHash:false});refresh({quiet:true}); setInterval(()=>{if(state.jobs.some(job=>["queued","running","stopping"].includes(job.status)))refresh({quiet:true})},2500);

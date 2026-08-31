@@ -39,7 +39,8 @@ from mblab.config import (
     public_model_profile,
 )
 from mblab.providers import OpenAICompatibleService, terminate_process
-from mblab.store import RunStore, read_json, write_json
+from mblab.store import RUN_ID, RunStore, read_json, write_json
+from mblab.worlds import MazeBenchWorldService
 
 activate_official_environment()
 
@@ -177,6 +178,12 @@ class ControlState:
         self.replay_runtime = runtime
         self.official = provenance()
         self.official_benchmark_contract = benchmark_contract(hide_names=True)
+        self.world_service = MazeBenchWorldService(
+            official_root=runtime,
+            repo_root=self.repo_root,
+            runs_root=self.store.root,
+            level_state_script=installed_resource("scripts", "official-level-state.js"),
+        )
         self.level_state_cache: dict[str, dict[str, Any]] = {}
         world_map = read_json(runtime / "games" / "maze" / "world_map.json", {})
         self.world_rooms = sorted(
@@ -360,6 +367,9 @@ class ControlState:
             and three
             and shutil.which("node") is not None
             and shutil.which("ffmpeg") is not None,
+            "world_browser": True,
+            "room_builder": True,
+            "experiment_batch_delete": True,
             "model_profiles": [
                 public_model_profile(profile)
                 for profile in self.model_profiles.values()
@@ -401,6 +411,8 @@ class ControlState:
     def start_trial(self, config: dict[str, Any]) -> dict[str, Any]:
         actions = int(config.get("actions", 256))
         temperature = float(config.get("temperature", 0.0))
+        repetitions = int(config.get("repetitions") or 1)
+        sampling_seed = int(config.get("sampling_seed") or 1)
         default_profile = next(iter(self.model_profiles))
         model_profile_id = str(config.get("model_profile") or default_profile).strip()
         context_mode = str(
@@ -468,6 +480,10 @@ class ControlState:
             raise ValueError("actions must be between 1 and 100000")
         if not 0 <= temperature <= 5:
             raise ValueError("temperature must be between 0 and 5")
+        if not 1 <= repetitions <= 100:
+            raise ValueError("repetitions must be between 1 and 100")
+        if not 0 <= sampling_seed <= 2_147_483_647 - repetitions + 1:
+            raise ValueError("sampling seed range is invalid")
         if level and len(level) > 64:
             raise ValueError("level is too long")
         if not 64 <= thinking_budget <= 32_768:
@@ -540,7 +556,7 @@ class ControlState:
                 job["kind"] == "trial" and job["status"] in {"queued", "running", "stopping"}
                 for job in self.jobs.values()
             ):
-                raise ValueError("a trial is already active; stop it or wait for it to finish")
+                raise ValueError("a trial batch is already active; stop it or wait for it to finish")
 
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         identity_label = (
@@ -557,70 +573,101 @@ class ControlState:
                 f"official-{observation_mode}-{identity_label}"
             )
         )
-        run_id = f"run-{stamp}-{suffix}"
-        counter = 2
-        while self.store.path_for(run_id).exists():
-            run_id = f"run-{stamp}-{suffix}-{counter}"
-            counter += 1
-
         with self.lock:
-            job = self._new_job("trial", run_id)
-            if fork_plan:
-                job["fork_parent_run_id"] = fork_plan.parent_run_id
+            experiment_id = f"experiment-{stamp}-{suffix}"
+            jobs: list[dict[str, Any]] = []
+            configs: list[dict[str, Any]] = []
+            planned_ids: set[str] = set()
+            worker_config = {
+                "actions": actions,
+                "temperature": temperature,
+                "model": model,
+                "model_profile": model_profile_id,
+                "model_label": model_profile["label"],
+                "base_url": base_url,
+                "api_key_env": model_profile["api_key_env"],
+                "token_count_mode": model_profile["token_count_mode"],
+                "thinking_contract": model_profile["thinking_contract"],
+                "context_mode": context_mode,
+                "observation_mode": observation_mode,
+                "ascii_character_mode": ascii_character_mode,
+                "level": level,
+                "profile": (
+                    f"unofficial-{observation_mode}-prompt-{identity_label}"
+                    if unofficial_system_prompt
+                    else f"official-{observation_mode}-{identity_label}-native-contract"
+                ),
+                "system_prompt": "unofficial" if unofficial_system_prompt else "official",
+                "system_prompt_sha256": system_prompt_sha256,
+                "system_prompt_matches_official": run_system_prompt == official_system_prompt,
+                "system_prompt_text": run_system_prompt,
+                "hide_names": hide_names,
+                "hide_names_seed": hide_names_seed,
+                "thinking": thinking,
+                "thinking_budget": thinking_budget if thinking else 0,
+                "preserve_thinking": preserve_thinking if thinking else False,
+                "fork": (
+                    {
+                        "mode": "active-context",
+                        "parent_run_id": fork_plan.parent_run_id,
+                        "turn": fork_plan.turn,
+                    }
+                    if fork_plan
+                    else None
+                ),
+            }
+            for repeat_index in range(1, repetitions + 1):
+                repeat_suffix = f"-r{repeat_index:02d}" if repetitions > 1 else ""
+                run_id = f"run-{stamp}-{suffix}{repeat_suffix}"
+                counter = 2
+                while self.store.path_for(run_id).exists() or run_id in planned_ids:
+                    run_id = f"run-{stamp}-{suffix}{repeat_suffix}-{counter}"
+                    counter += 1
+                planned_ids.add(run_id)
+                job = self._new_job("trial", run_id)
+                job.update(
+                    experiment_id=experiment_id,
+                    repeat_index=repeat_index,
+                    repeat_count=repetitions,
+                    sampling_seed=sampling_seed + repeat_index - 1,
+                    model_label=model_profile["label"],
+                )
+                if fork_plan:
+                    job["fork_parent_run_id"] = fork_plan.parent_run_id
+                repeat_config = {
+                    **worker_config,
+                    "sampling_seed": sampling_seed + repeat_index - 1,
+                    "experiment_id": experiment_id,
+                    "repeat_index": repeat_index,
+                    "repeat_count": repetitions,
+                }
+                jobs.append(job)
+                configs.append(repeat_config)
             thread = threading.Thread(
-                target=self._trial_worker,
-                args=(job["id"], {
-                    "actions": actions,
-                    "temperature": temperature,
-                    "model": model,
-                    "model_profile": model_profile_id,
-                    "model_label": model_profile["label"],
-                    "base_url": base_url,
-                    "api_key_env": model_profile["api_key_env"],
-                    "token_count_mode": model_profile["token_count_mode"],
-                    "thinking_contract": model_profile["thinking_contract"],
-                    "context_mode": context_mode,
-                    "observation_mode": observation_mode,
-                    "ascii_character_mode": ascii_character_mode,
-                    "level": level,
-                    "profile": (
-                        (
-                            f"unofficial-{observation_mode}-prompt-{identity_label}"
-                        )
-                        if unofficial_system_prompt
-                        else (
-                            f"official-{observation_mode}-{identity_label}-native-contract"
-                        )
-                    ),
-                    "system_prompt": (
-                        "unofficial" if unofficial_system_prompt else "official"
-                    ),
-                    "system_prompt_sha256": system_prompt_sha256,
-                    "system_prompt_matches_official": (
-                        run_system_prompt == official_system_prompt
-                    ),
-                    "system_prompt_text": run_system_prompt,
-                    "hide_names": hide_names,
-                    "hide_names_seed": hide_names_seed,
-                    "thinking": thinking,
-                    "thinking_budget": thinking_budget if thinking else 0,
-                    "preserve_thinking": preserve_thinking if thinking else False,
-                    "fork": (
-                        {
-                            "mode": "active-context",
-                            "parent_run_id": fork_plan.parent_run_id,
-                            "turn": fork_plan.turn,
-                        }
-                        if fork_plan
-                        else None
-                    ),
-                }),
+                target=self._trial_worker if repetitions == 1 else self._trial_batch_worker,
+                args=(
+                    (jobs[0]["id"], configs[0])
+                    if repetitions == 1
+                    else ([job["id"] for job in jobs], configs)
+                ),
                 daemon=True,
-                name=job["id"],
+                name=experiment_id,
             )
-            job["thread"] = thread
+            for job in jobs:
+                job["thread"] = thread
             thread.start()
-            return public_job(job)
+            response = public_job(jobs[0])
+            response["run_ids"] = [job["run_id"] for job in jobs]
+            return response
+
+    def _trial_batch_worker(
+        self, job_ids: list[str], configs: list[dict[str, Any]]
+    ) -> None:
+        for job_id, config in zip(job_ids, configs, strict=True):
+            with self.lock:
+                if self.jobs[job_id]["status"] != "queued":
+                    continue
+            self._trial_worker(job_id, config)
 
     def _trial_worker(self, job_id: str, config: dict[str, Any]) -> None:
         with self.lock:
@@ -659,6 +706,7 @@ class ControlState:
             "--context-mode", config["context_mode"],
             "--observation-mode", config["observation_mode"],
             "--temperature", str(config["temperature"]),
+            "--seed", str(config["sampling_seed"]),
             "--hide-names", "on" if config["hide_names"] else "off",
             "--hide-names-seed", config["hide_names_seed"],
             "--thinking", "on" if config["thinking"] else "off",
@@ -845,6 +893,38 @@ class ControlState:
         shutil.move(str(path), str(target))
         return {"deleted": run_id, "recoverable_from": str(target)}
 
+    def delete_experiment(self, experiment_id: str) -> dict[str, Any]:
+        """Move every persisted repetition in a completed batch to trash."""
+        experiment_id = str(experiment_id or "").strip()
+        if not RUN_ID.fullmatch(experiment_id):
+            raise ValueError("invalid experiment id")
+        runs = [
+            run for run in self.store.list()
+            if str((run.get("config") or {}).get("experiment_id") or "") == experiment_id
+        ]
+        if not runs:
+            raise FileNotFoundError(experiment_id)
+        run_ids = {run["id"] for run in runs}
+        with self.lock:
+            if any(
+                job.get("experiment_id") == experiment_id
+                and job.get("status") in {"queued", "running", "stopping"}
+                for job in self.jobs.values()
+            ):
+                raise ValueError("an active experiment batch cannot be deleted")
+            if any(
+                (job.get("run_id") in run_ids or job.get("fork_parent_run_id") in run_ids)
+                and job.get("status") in {"queued", "running", "stopping"}
+                for job in self.jobs.values()
+            ):
+                raise ValueError("an active run, replay, or child fork depends on this experiment")
+        deleted = [self.delete_run(run["id"]) for run in runs]
+        return {
+            "deleted_experiment": experiment_id,
+            "deleted_runs": [item["deleted"] for item in deleted],
+            "recoverable_from": [item["recoverable_from"] for item in deleted],
+        }
+
     def _replay_worker(self, job_id: str) -> None:
         with self.lock:
             job = self.jobs[job_id]
@@ -954,14 +1034,20 @@ class ControlState:
             job = self.jobs.get(job_id)
             if not job:
                 raise FileNotFoundError(job_id)
-            process = job.get("process")
-            if process and process.poll() is None:
-                process.terminate()
-                job.update(status="stopping")
-            model_process = job.get("model_process")
-            if model_process and model_process.poll() is None:
-                model_process.terminate()
-                job.update(status="stopping")
+            experiment_id = job.get("experiment_id")
+            related = [
+                candidate for candidate in self.jobs.values()
+                if candidate is job or (experiment_id and candidate.get("experiment_id") == experiment_id)
+            ]
+            for candidate in related:
+                if candidate.get("status") == "queued":
+                    candidate.update(status="cancelled", ended_at=utc_now())
+                elif candidate.get("status") == "running":
+                    candidate.update(status="stopping")
+                for key in ("process", "model_process"):
+                    process = candidate.get(key)
+                    if process and process.poll() is None:
+                        process.terminate()
             return public_job(job)
 
     def shutdown(self) -> None:
@@ -975,6 +1061,7 @@ class ControlState:
             ]
         for process in processes:
             terminate_process(process)
+        self.world_service.shutdown()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1005,7 +1092,50 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("request body is too large")
         return json.loads(self.rfile.read(length) or b"{}")
 
+    def proxy_runtime(self) -> bool:
+        """Proxy MazeBench's native authoring site below /maze."""
+        parsed_url = urllib.parse.urlsplit(self.path)
+        if parsed_url.path not in {"/maze", "/maze/"} and not parsed_url.path.startswith("/maze/"):
+            return False
+        if self.client_address[0] not in {"127.0.0.1", "::1"}:
+            self.error_response(403, "the room builder is available only over a loopback connection")
+            return True
+        target_path = parsed_url.path.removeprefix("/maze") or "/build"
+        if parsed_url.query:
+            target_path += f"?{parsed_url.query}"
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length > 25 * 1024 * 1024:
+            self.error_response(413, "MazeBench builder request is too large")
+            return True
+        body = self.rfile.read(length) if length else b""
+        try:
+            status, headers, payload = self.state.world_service.proxy(
+                self.command,
+                target_path,
+                body=body,
+                headers={
+                    "Accept": self.headers.get("Accept", ""),
+                    "Content-Type": self.headers.get("Content-Type", ""),
+                    "Range": self.headers.get("Range", ""),
+                },
+            )
+        except Exception as exc:
+            self.error_response(502, str(exc))
+            return True
+        self.send_response(status)
+        for name in ("Content-Type", "Content-Disposition", "Accept-Ranges", "Content-Range", "Location"):
+            if headers.get(name):
+                self.send_header(name, headers[name])
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", headers.get("Cache-Control", "no-store"))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(payload)
+        return True
+
     def do_GET(self) -> None:  # noqa: N802
+        if self.proxy_runtime():
+            return
         parsed_url = urllib.parse.urlsplit(self.path)
         path = parsed_url.path
         if path == "/api/health":
@@ -1027,7 +1157,13 @@ class Handler(BaseHTTPRequestHandler):
                 jobs = [public_job(job) for job in self.state.jobs.values()]
             self.json_response({"jobs": jobs})
             return
+        if path == "/api/worlds":
+            self.json_response(self.state.world_service.catalog())
+            return
         parts = [urllib.parse.unquote(part) for part in path.split("/") if part]
+        if len(parts) == 5 and parts[:2] == ["api", "worlds"] and parts[3] == "rooms":
+            self.json_response(self.state.world_service.room_detail(parts[2], parts[4]))
+            return
         if len(parts) == 4 and parts[:3] == ["api", "play", "maze"]:
             self.json_response(self.state.level_state(parts[3]))
             return
@@ -1098,6 +1234,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_file(candidate)
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.proxy_runtime():
+            return
         path = urllib.parse.urlsplit(self.path).path
         try:
             if path == "/api/runs":
@@ -1119,11 +1257,16 @@ class Handler(BaseHTTPRequestHandler):
             self.error_response(500, str(exc))
 
     def do_DELETE(self) -> None:  # noqa: N802
+        if self.proxy_runtime():
+            return
         path = urllib.parse.urlsplit(self.path).path
         try:
             parts = [urllib.parse.unquote(part) for part in path.split("/") if part]
             if len(parts) == 3 and parts[:2] == ["api", "runs"]:
                 self.json_response(self.state.delete_run(parts[2]))
+                return
+            if len(parts) == 3 and parts[:2] == ["api", "experiments"]:
+                self.json_response(self.state.delete_experiment(parts[2]))
                 return
             self.error_response(404, "endpoint not found")
         except FileNotFoundError:
@@ -1132,6 +1275,14 @@ class Handler(BaseHTTPRequestHandler):
             self.error_response(409, str(exc))
         except Exception as exc:
             self.error_response(500, str(exc))
+
+    def do_PUT(self) -> None:  # noqa: N802
+        if not self.proxy_runtime():
+            self.error_response(404, "endpoint not found")
+
+    def do_PATCH(self) -> None:  # noqa: N802
+        if not self.proxy_runtime():
+            self.error_response(404, "endpoint not found")
 
     def serve_static(self, request_path: str) -> None:
         candidate = web_asset_for(request_path)

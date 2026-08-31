@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>MazeBench Control Center</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=20260826-3">
+  <link rel="stylesheet" href="/styles.css?v=20260831-2">
 </head>
 <body>
   <div class="app-shell">
@@ -16,8 +16,10 @@
         <div><strong>MazeBench</strong><small>CONTROL CENTER</small></div>
       </div>
       <nav aria-label="Primary">
-        <button class="nav-item is-active"><span>⌁</span> Runs</button>
+        <button class="nav-item is-active" data-view="runs"><span>⌁</span> Runs</button>
         <button class="nav-item" data-scroll="analytics"><span>⌗</span> Analytics</button>
+        <button class="nav-item" data-view="worlds"><span>▦</span> World viewer</button>
+        <button class="nav-item" data-view="builder"><span>◇</span> Room builder</button>
       </nav>
       <div class="rail-status">
         <span class="status-dot"></span>
@@ -28,18 +30,19 @@
     <main>
       <header class="topbar">
         <div>
-          <p class="eyebrow">LOCAL EXPERIMENT OPERATIONS</p>
-          <h1>Control center</h1>
+          <p class="eyebrow" id="page-eyebrow">LOCAL EXPERIMENT OPERATIONS</p>
+          <h1 id="page-title">Control center</h1>
         </div>
         <div class="header-actions">
           <button class="button button-ghost" id="refresh-button">Refresh</button>
+          <a class="button button-ghost" id="open-builder-button" href="/maze/build" target="_blank" rel="noopener" hidden>Open builder in new tab</a>
           <button class="button button-primary" id="new-run-button"><span>＋</span> New trial</button>
         </div>
       </header>
 
-      <section class="fleet-strip" id="fleet-strip" aria-label="Corpus summary"></section>
+      <section class="fleet-strip" id="fleet-strip" data-app-view="runs" aria-label="Corpus summary"></section>
 
-      <div class="workspace">
+      <div class="workspace" data-app-view="runs">
         <section class="run-browser">
           <div class="section-head">
             <div><p class="eyebrow">RUN ARCHIVE</p><h2>Trials</h2></div>
@@ -59,6 +62,31 @@
           </div>
         </section>
       </div>
+
+      <section class="world-explorer" id="worlds-view" data-app-view="worlds" hidden>
+        <aside class="world-browser">
+          <div class="section-head">
+            <div><p class="eyebrow">ENVIRONMENT ARCHIVE</p><h2>Worlds and rooms</h2></div>
+            <span class="count-pill" id="world-room-count">0</span>
+          </div>
+          <label class="world-select-label" for="world-select">World</label>
+          <select class="world-select" id="world-select"><option>Loading worlds…</option></select>
+          <div class="run-filter world-room-filter"><span>⌕</span><input id="world-room-search" type="search" placeholder="Find room coordinate…" autocomplete="off"></div>
+          <div class="world-summary" id="world-summary"></div>
+          <div class="world-room-grid" id="world-room-grid"><div class="empty-state">Open the viewer to load rooms.</div></div>
+        </aside>
+        <section class="world-room-detail" id="world-room-detail">
+          <div class="empty-detail"><div class="empty-maze"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><h2>Select a room</h2><p>Inspect its native engine rendering, objects, mechanics, and source grid.</p></div>
+        </section>
+      </section>
+
+      <section class="builder-view" id="builder-view" data-app-view="builder" hidden>
+        <div class="builder-note">
+          <div><p class="eyebrow">NATIVE MAZEBENCH AUTHORING TOOL</p><b>Draft worlds use the native engine and persist in MazeBench’s local workspace.</b><span>The pinned benchmark world is read-only. Create or duplicate a draft before editing.</span></div>
+          <span class="badge completed">LOCAL ONLY</span>
+        </div>
+        <iframe id="builder-frame" title="MazeBench room builder" data-src="/maze/build" allow="fullscreen"></iframe>
+      </section>
     </main>
   </div>
 
@@ -77,6 +105,8 @@
         <label class="field field-wide fork-turn-field" id="fork-turn-field"><span>Fork checkpoint <em>parent turn</em></span><input name="fork_turn" id="fork-turn" type="number" min="1" step="1" disabled><small class="field-help">The child inherits state and history through this action. Its action budget below is additional.</small></label>
         <label class="field"><span>Action budget</span><input name="actions" type="number" min="1" max="100000" value="256" required></label>
         <label class="field"><span>Temperature</span><input name="temperature" type="number" min="0" max="5" step="0.1" value="0"></label>
+        <label class="field"><span>Repetitions</span><input name="repetitions" id="trial-repetitions" type="number" min="1" max="100" value="1" required><small class="field-help">Queued and run sequentially.</small></label>
+        <label class="field"><span>Base sampling seed</span><input name="sampling_seed" id="sampling-seed" type="number" min="0" max="2147483548" value="1" required><small class="field-help">Each repetition increments this seed.</small></label>
         <label class="field"><span>Start level <em>optional</em></span><input name="level" placeholder="HxI"></label>
         <label class="field field-wide" id="ascii-character-field"><span>ASCII character set</span><select name="ascii_character_mode" id="ascii-character-mode"><option value="canonical">Default MazeBench characters</option><option value="random">Stable randomized characters</option></select><small class="field-help">Applies only to ASCII observations. Player P and gem G remain fixed in randomized mode.</small></label>
         <label class="field field-wide" id="ascii-seed-field" hidden><span>Random character seed</span><input name="hide_names_seed" id="ascii-seed" value="1" maxlength="128" autocomplete="off"><small class="field-help">The same seed deterministically produces the same randomized character mapping.</small></label>
@@ -119,6 +149,6 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=20260826-3" defer></script>
+  <script src="/app.js?v=20260831-1" defer></script>
 </body>
 </html>
