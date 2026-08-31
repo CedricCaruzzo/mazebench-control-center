@@ -35,7 +35,7 @@ private endpoint, model output, or experiment data._
 - macOS or Linux (Windows users can run the server on a remote host and use an
   SSH tunnel);
 - Python 3.11–3.13 and `uv`;
-- Node.js/npm for 3D replay generation;
+- Node.js 20 or newer and npm for 3D replay generation and room authoring;
 - an OpenAI-compatible chat-completions endpoint such as llama.cpp or vLLM.
 
 Model weights and experiment runs are deliberately not included.
@@ -128,7 +128,7 @@ Then open <http://127.0.0.1:18787> locally.
 
 - [Getting started](docs/getting-started.md): installation through the first trial.
 - [Configure a new experiment](docs/new-experiment.md): every field in **New trial** and its research meaning.
-- [Inspect, replay, and fork runs](docs/inspecting-runs.md): live monitoring, reasoning, compactions, replay, and exports.
+- [Inspect, replay, and fork runs](docs/inspecting-runs.md): grouped repetitions, live monitoring, world inspection, room building, reasoning, replay, and exports.
 - [Model profiles](docs/model-profiles.md): managed llama.cpp and external OpenAI-compatible endpoints.
 - [Troubleshooting](docs/troubleshooting.md): ports, model connectivity, context limits, and replay setup.
 

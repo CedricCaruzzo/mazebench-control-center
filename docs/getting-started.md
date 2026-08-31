@@ -9,7 +9,7 @@ Requirements:
 
 - macOS or Linux;
 - Python 3.11–3.13 and `uv`;
-- Node.js/npm and FFmpeg for generated 3D replay;
+- Node.js 20 or newer, npm, and FFmpeg for generated 3D replay and room authoring;
 - an OpenAI-compatible chat-completions endpoint, or a local model command the
   Control Center can start.
 

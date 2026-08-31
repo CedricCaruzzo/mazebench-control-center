@@ -145,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--model", default="local")
     ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--seed", type=int, default=1, help="sampling seed")
     ap.add_argument("--thinking", choices=("on", "off"), default="off",
                     help="enable model reasoning through llama.cpp's chat template")
     ap.add_argument("--thinking-budget", type=int, default=2048,
@@ -215,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--hide-names-seed must be at most 128 characters")
     if not 64 <= args.thinking_budget <= 32768:
         ap.error("--thinking-budget must be between 64 and 32768")
+    if not 0 <= args.seed <= 2_147_483_647:
+        ap.error("--seed must be between 0 and 2147483647")
     if args.context_mode == COMPACTION_MODE:
         if not 8_192 <= args.compact_at_tokens <= 75_000:
             ap.error("--compact-at-tokens must be between 8192 and 75000")
@@ -359,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         "presence_penalty": 0.0,
         "frequency_penalty": 0.0,
         "top_p": 0.80,
+        "seed": args.seed,
     }
     if args.thinking_contract == "qwen":
         sampling_args["extra_body"] = {
@@ -448,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
                 "matches_official": prompt_matches_official,
             },
             "temperature": args.temperature,
+            "sampling_seed": args.seed,
             "thinking": args.thinking == "on",
             "thinking_budget": args.thinking_budget if args.thinking == "on" else 0,
             "preserve_thinking": (
