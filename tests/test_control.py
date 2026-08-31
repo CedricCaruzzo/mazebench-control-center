@@ -122,6 +122,22 @@ class ControlStateTest(unittest.TestCase):
             }
             self.assertEqual(statuses, {"stopping", "cancelled"})
 
+    def test_stop_experiment_reports_batch_outcome(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ControlState(Path(directory), Path(directory) / "runs")
+            first = state._new_job("trial", "run-batch-r01")
+            second = state._new_job("trial", "run-batch-r02")
+            for job in (first, second):
+                job["experiment_id"] = "experiment-batch"
+            first["status"] = "running"
+
+            result = state.stop_experiment("experiment-batch")
+
+            self.assertEqual(result["stopping"], 1)
+            self.assertEqual(result["cancelled"], 1)
+            self.assertEqual(first["status"], "stopping")
+            self.assertEqual(second["status"], "cancelled")
+
     def test_trial_ignores_submitted_prompt_without_unofficial_toggle(self):
         with tempfile.TemporaryDirectory() as directory:
             state = ControlState(Path(directory), Path(directory) / "runs")
@@ -356,6 +372,45 @@ class ControlStateTest(unittest.TestCase):
             self.assertEqual(set(result["deleted_runs"]), {"run-repeat-1", "run-repeat-2"})
             self.assertFalse((state.store.root / "run-repeat-1").exists())
             self.assertEqual(len(list((state.store.root / ".trash").iterdir())), 2)
+
+    def test_delete_experiment_rolls_back_when_a_move_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ControlState(Path(directory), Path(directory) / "runs")
+            for index in (1, 2):
+                run_dir = state.store.root / f"run-rollback-{index}"
+                run_dir.mkdir(parents=True)
+                (run_dir / "run.json").write_text(
+                    json.dumps(
+                        {
+                            "id": run_dir.name,
+                            "status": "completed",
+                            "config": {"experiment_id": "experiment-rollback"},
+                        }
+                    )
+                )
+            moves = 0
+
+            def move_with_second_failure(source, target):
+                nonlocal moves
+                moves += 1
+                if moves == 2:
+                    raise OSError("simulated move failure")
+                Path(source).rename(target)
+                return str(target)
+
+            with patch("mblab.control.shutil.move", side_effect=move_with_second_failure):
+                with self.assertRaisesRegex(OSError, "simulated move failure"):
+                    state.delete_experiment("experiment-rollback")
+
+            self.assertTrue((state.store.root / "run-rollback-1").is_dir())
+            self.assertTrue((state.store.root / "run-rollback-2").is_dir())
+            self.assertFalse(any((state.store.root / ".trash").iterdir()))
+
+    def test_control_center_routes_group_actions_as_batches(self):
+        app = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+        self.assertIn("if(experimentId)return deleteExperiment(experimentId)", app)
+        self.assertIn("if(experimentId)return stopExperiment(experimentId)", app)
+        self.assertIn("selectDefault:false", app)
 
 
 if __name__ == "__main__":
