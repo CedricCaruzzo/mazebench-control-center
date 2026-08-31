@@ -918,7 +918,19 @@ class ControlState:
                 for job in self.jobs.values()
             ):
                 raise ValueError("an active run, replay, or child fork depends on this experiment")
-        deleted = [self.delete_run(run["id"]) for run in runs]
+        # A repeated experiment is one user-facing object. Roll already-moved
+        # runs back into the archive if any later filesystem move fails.
+        deleted: list[dict[str, str]] = []
+        try:
+            for run in runs:
+                deleted.append(self.delete_run(run["id"]))
+        except Exception:
+            for item in reversed(deleted):
+                recoverable = Path(item["recoverable_from"])
+                original = self.store.path_for(item["deleted"])
+                if recoverable.is_dir() and not original.exists():
+                    shutil.move(str(recoverable), str(original))
+            raise
         return {
             "deleted_experiment": experiment_id,
             "deleted_runs": [item["deleted"] for item in deleted],
@@ -1029,25 +1041,61 @@ class ControlState:
             self.jobs[job_id].pop("process", None)
         shutil.rmtree(render_dir, ignore_errors=True)
 
+    def _stop_jobs(self, jobs: list[dict[str, Any]]) -> dict[str, int]:
+        counts = {"cancelled": 0, "stopping": 0, "already_finished": 0}
+        for candidate in jobs:
+            status = candidate.get("status")
+            if status == "queued":
+                candidate.update(status="cancelled", ended_at=utc_now())
+                counts["cancelled"] += 1
+                continue
+            if status in {"running", "stopping"}:
+                candidate.update(status="stopping")
+                counts["stopping"] += 1
+                for key in ("process", "model_process"):
+                    process = candidate.get(key)
+                    if process and process.poll() is None:
+                        process.terminate()
+                continue
+            counts["already_finished"] += 1
+        return counts
+
+    def stop_experiment(self, experiment_id: str) -> dict[str, Any]:
+        """Stop every queued or running repetition in an experiment batch."""
+        experiment_id = str(experiment_id or "").strip()
+        if not RUN_ID.fullmatch(experiment_id):
+            raise ValueError("invalid experiment id")
+        with self.lock:
+            jobs = [
+                candidate
+                for candidate in self.jobs.values()
+                if candidate.get("kind") == "trial"
+                and candidate.get("experiment_id") == experiment_id
+            ]
+            if not jobs:
+                raise FileNotFoundError(experiment_id)
+            counts = self._stop_jobs(jobs)
+            return {
+                "stopped_experiment": experiment_id,
+                "jobs": [public_job(job) for job in jobs],
+                **counts,
+            }
+
     def stop_job(self, job_id: str) -> dict[str, Any]:
         with self.lock:
             job = self.jobs.get(job_id)
             if not job:
                 raise FileNotFoundError(job_id)
             experiment_id = job.get("experiment_id")
-            related = [
-                candidate for candidate in self.jobs.values()
-                if candidate is job or (experiment_id and candidate.get("experiment_id") == experiment_id)
-            ]
-            for candidate in related:
-                if candidate.get("status") == "queued":
-                    candidate.update(status="cancelled", ended_at=utc_now())
-                elif candidate.get("status") == "running":
-                    candidate.update(status="stopping")
-                for key in ("process", "model_process"):
-                    process = candidate.get(key)
-                    if process and process.poll() is None:
-                        process.terminate()
+            if experiment_id:
+                jobs = [
+                    candidate
+                    for candidate in self.jobs.values()
+                    if candidate.get("experiment_id") == experiment_id
+                ]
+                self._stop_jobs(jobs)
+            else:
+                self._stop_jobs([job])
             return public_job(job)
 
     def shutdown(self) -> None:
@@ -1247,6 +1295,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "stop":
                 self.json_response(self.state.stop_job(parts[2]), HTTPStatus.ACCEPTED)
+                return
+            if (
+                len(parts) == 4
+                and parts[:2] == ["api", "experiments"]
+                and parts[3] == "stop"
+            ):
+                self.json_response(
+                    self.state.stop_experiment(parts[2]), HTTPStatus.ACCEPTED
+                )
                 return
             self.error_response(404, "endpoint not found")
         except FileNotFoundError:

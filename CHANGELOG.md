@@ -10,6 +10,12 @@ are clearly documented.
 
 - Task-oriented user documentation with sanitized guides and screenshots for setup, trial configuration, run inspection, model profiles, and troubleshooting.
 
+### Fixed
+
+- Make repeated-trial stop and delete operations explicitly batch-scoped.
+- Prevent repeated delete clicks from silently selecting and deleting the next archived run.
+- Roll back batch deletion if moving any repetition to recoverable trash fails.
+
 ## [0.1.1] - 2026-08-29
 
 ### Security
