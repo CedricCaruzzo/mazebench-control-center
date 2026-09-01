@@ -20,6 +20,29 @@ Repeated trials are grouped under a collapsible batch card. Expand it to open
 an individual run, inspect its resolved sampling seed, or compare completion
 and action counts without filling the archive with unrelated-looking cards.
 
+The execution queue above the archive lists the currently running trial and
+all waiting trials in FIFO order. A waiting item can be removed independently,
+or all waiting members of a grouped experiment can be dequeued together.
+
+## Corpus analytics
+
+Select **Analytics** in the navigation rail for aggregate accounting and model
+behavior summaries. It includes:
+
+- lifetime input, output, and cached tokens from saved provider journals;
+- action totals, tokens per action, model-call and compaction counts;
+- prompt-processing and generation throughput when the endpoint reports native
+  timing fields;
+- model-level usage, speed, exploration, and run outcomes;
+- action entropy, revisited and blocked-action rates, ABAB oscillations,
+  repeated-command streaks, and plateau share;
+- recent token scale and observation-representation composition.
+
+Fork-inherited actions and model calls are excluded from aggregate behavioral
+and provider totals so a parent history is not counted again. These behavior
+signals are descriptive diagnostics. For example, high action entropy does not
+by itself imply effective exploration.
+
 ## Inspect worlds and build drafts
 
 **World viewer** lists the pinned official world and draft worlds stored by
@@ -39,6 +62,10 @@ The summary cards and charts are recomputed from raw actions:
 - rooms and gems track benchmark progress;
 - state novelty is the proportion of unique saved state hashes;
 - a plateau counts consecutive actions without a new state;
+- action entropy describes command diversity over the trace;
+- blocked-action and revisit rates expose repeated ineffective interaction;
+- ABAB oscillations and longest command streak capture two common collapse
+  shapes;
 - token use combines recorded prompt and completion usage;
 - the room path breaks on death, reset, or room entry instead of drawing a
   misleading teleport;

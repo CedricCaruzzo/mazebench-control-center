@@ -34,6 +34,21 @@ Apart from their sampling seeds, repeated runs receive the same submitted
 configuration. They remain separate run artifacts rather than being averaged
 into a new benchmark score.
 
+## Queue several experiments
+
+Launching a new experiment while another trial is running adds it to one
+process-wide FIFO queue. The Runs sidebar shows the active trial, every waiting
+trial, and each waiting position. This lets managed model profiles run safely
+without overlapping service lifecycles.
+
+Select **Remove** beside a waiting trial to cancel only that item. Select
+**Dequeue batch** on a grouped experiment to cancel all of its waiting
+repetitions. Neither action stops a repetition that is already running. Use
+**Stop batch** when the intended operation includes the running member.
+
+The queue is runtime state. Restarting the Control Center cancels pending jobs;
+completed and partially written run directories remain the filesystem record.
+
 ## Observation representation
 
 ### JSON
