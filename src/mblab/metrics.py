@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+from math import log2
 from typing import Any, Iterable
 
 
 NOVELTY_WINDOW = 25
+BEHAVIOR_WINDOW = 25
+ACTION_VOCABULARY_SIZE = 10
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -35,6 +38,16 @@ def _component(summary: dict[str, Any], name: str, default: Any = 0) -> Any:
     return (summary.get("components") or {}).get(name, default)
 
 
+def _entropy(values: Iterable[str]) -> float:
+    rows = list(values)
+    if not rows:
+        return 0.0
+    counts = Counter(rows)
+    return -sum(
+        (count / len(rows)) * log2(count / len(rows)) for count in counts.values()
+    )
+
+
 def derive_metrics(
     actions: Iterable[dict[str, Any]],
     summary: dict[str, Any] | None = None,
@@ -51,6 +64,9 @@ def derive_metrics(
     novelty_bits: list[int] = []
     timeline: list[dict[str, Any]] = []
     command_counts: Counter[str] = Counter()
+    behavior_command_counts: Counter[str] = Counter()
+    behavior_commands: list[str] = []
+    failure_bits: list[int] = []
     room_counts: Counter[str] = Counter()
     first_room_turn: dict[str, int] = {}
     room_entries: Counter[str] = Counter()
@@ -59,6 +75,14 @@ def derive_metrics(
     start_seconds = _iso_seconds(action_list[0].get("timestamp")) if action_list else None
     previous_room = ""
     previous_gems = 0
+    longest_command_streak = 0
+    command_streak = 0
+    longest_failed_streak = 0
+    failed_streak = 0
+    action_switches = 0
+    oscillations = 0
+    first_gem_action: int | None = None
+    first_room_transition_action: int | None = None
 
     for index, action in enumerate(action_list, start=1):
         status = action.get("status") or {}
@@ -84,10 +108,39 @@ def derive_metrics(
         command = str(action.get("command") or action.get("raw_response") or "unknown")
         normalized = str(action.get("normalized_action") or status.get("action") or command)
         command_counts[normalized] += 1
+        behavior_command = command.strip().lower() or "unknown"
+        if behavior_commands and behavior_command != behavior_commands[-1]:
+            action_switches += 1
+        command_streak = (
+            command_streak + 1
+            if behavior_commands and behavior_command == behavior_commands[-1]
+            else 1
+        )
+        longest_command_streak = max(longest_command_streak, command_streak)
+        behavior_commands.append(behavior_command)
+        behavior_command_counts[behavior_command] += 1
+        if (
+            len(behavior_commands) >= 4
+            and behavior_commands[-1] == behavior_commands[-3]
+            and behavior_commands[-2] == behavior_commands[-4]
+            and behavior_commands[-1] != behavior_commands[-2]
+        ):
+            oscillations += 1
+        failed_action = status.get("moved") is False
+        failure_bits.append(int(failed_action))
+        failed_streak = failed_streak + 1 if failed_action else 0
+        longest_failed_streak = max(longest_failed_streak, failed_streak)
         gems = int(_number(status.get("gem_count"), len(status.get("collected_gems") or [])))
+        if first_gem_action is None and gems > previous_gems:
+            first_gem_action = turn
+        if first_room_transition_action is None and len(seen_rooms) > 1 and entered_room:
+            first_room_transition_action = turn
         player = status.get("player") or {}
         timestamp_seconds = _iso_seconds(action.get("timestamp"))
         window = novelty_bits[-NOVELTY_WINDOW:]
+        behavior_window = behavior_commands[-BEHAVIOR_WINDOW:]
+        behavior_entropy_bits = _entropy(behavior_window)
+        failure_window = failure_bits[-BEHAVIOR_WINDOW:]
         player_dead = bool(status.get("player_dead"))
         is_reset = normalized.strip().lower() == "reset" or command.strip().lower() == "reset"
         path_break_reason = (
@@ -119,6 +172,22 @@ def derive_metrics(
                 "unique_states": len(seen_hashes),
                 "novel_state": bool(novel),
                 "novelty_rolling": round(sum(window) / len(window), 4),
+                "action_entropy_rolling_bits": round(behavior_entropy_bits, 4),
+                "action_entropy_rolling": round(
+                    min(1.0, behavior_entropy_bits / log2(ACTION_VOCABULARY_SIZE)),
+                    4,
+                ),
+                "failed_action": failed_action,
+                "failed_action_rolling": round(
+                    sum(failure_window) / len(failure_window), 4
+                ),
+                "command_streak": command_streak,
+                "oscillation": bool(
+                    len(behavior_commands) >= 4
+                    and behavior_commands[-1] == behavior_commands[-3]
+                    and behavior_commands[-2] == behavior_commands[-4]
+                    and behavior_commands[-1] != behavior_commands[-2]
+                ),
                 "plateau_length": plateau,
                 "pushes": int(_number(status.get("push_count"))),
                 "player_dead": player_dead,
@@ -163,6 +232,8 @@ def derive_metrics(
         1 for action in action_list if (action.get("normalized_action") or "") == "move"
     )
     moved = sum(1 for action in action_list if (action.get("status") or {}).get("moved"))
+    failed_actions = sum(failure_bits)
+    behavior_entropy_bits = _entropy(behavior_commands)
 
     room_rows = [
         {
@@ -193,6 +264,36 @@ def derive_metrics(
             "current_plateau": plateau,
             "deaths": sum(bool((action.get("status") or {}).get("player_dead")) for action in action_list),
             "movement_success_rate": round(moved / max(1, movement_attempts), 4),
+            "action_entropy_bits": round(behavior_entropy_bits, 4),
+            "action_entropy_normalized": round(
+                min(1.0, behavior_entropy_bits / log2(ACTION_VOCABULARY_SIZE)),
+                4,
+            ),
+            "action_switches": action_switches,
+            "action_switch_rate": round(action_switches / max(1, turns - 1), 4),
+            "longest_command_streak": longest_command_streak,
+            "oscillations": oscillations,
+            "oscillations_per_100_actions": round(
+                oscillations * 100 / max(1, turns), 2
+            ),
+            "failed_actions": failed_actions,
+            "failed_action_rate": round(failed_actions / max(1, turns), 4),
+            "longest_failed_action_streak": longest_failed_streak,
+            "revisited_state_rate": round(
+                max(0, turns - unique_states) / max(1, turns), 4
+            ),
+            "longest_plateau_share": round(
+                longest_plateau / max(1, turns), 4
+            ),
+            "unique_states_per_100_actions": round(
+                unique_states * 100 / max(1, turns), 2
+            ),
+            "rooms_per_100_actions": round(
+                rooms_visited * 100 / max(1, turns), 2
+            ),
+            "gems_per_100_actions": round(gems * 100 / max(1, turns), 2),
+            "first_gem_action": first_gem_action,
+            "first_room_transition_action": first_room_transition_action,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
@@ -207,6 +308,7 @@ def derive_metrics(
             "elapsed_s": _number(summary.get("elapsed_s"), metadata.get("time")),
         },
         "commands": dict(command_counts.most_common()),
+        "behavior_commands": dict(behavior_command_counts.most_common()),
         "rooms": room_rows,
         "timeline": timeline,
     }

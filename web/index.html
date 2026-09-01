@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>MazeBench Control Center</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=20260831-3">
+  <link rel="stylesheet" href="/styles.css?v=20260901-1">
 </head>
 <body>
   <div class="app-shell">
@@ -17,7 +17,7 @@
       </div>
       <nav aria-label="Primary">
         <button class="nav-item is-active" data-view="runs"><span>⌁</span> Runs</button>
-        <button class="nav-item" data-scroll="analytics"><span>⌗</span> Analytics</button>
+        <button class="nav-item" data-view="analytics"><span>⌗</span> Analytics</button>
         <button class="nav-item" data-view="worlds"><span>▦</span> World viewer</button>
         <button class="nav-item" data-view="builder"><span>◇</span> Room builder</button>
       </nav>
@@ -48,6 +48,10 @@
             <div><p class="eyebrow">RUN ARCHIVE</p><h2>Trials</h2></div>
             <span class="count-pill" id="run-count">0</span>
           </div>
+          <section class="trial-queue" id="trial-queue" hidden aria-label="Trial execution queue">
+            <header><div><p class="eyebrow">EXECUTION QUEUE</p><b>Model service schedule</b></div><span id="trial-queue-summary"></span></header>
+            <div class="trial-queue-list" id="trial-queue-list"></div>
+          </section>
           <div class="run-filter">
             <span>⌕</span><input id="run-search" type="search" placeholder="Filter runs…" autocomplete="off">
           </div>
@@ -62,6 +66,12 @@
           </div>
         </section>
       </div>
+
+      <section class="analytics-view" id="analytics-view" data-app-view="analytics" hidden>
+        <div class="analytics-content" id="analytics-content">
+          <div class="empty-detail"><p>Loading experiment history…</p></div>
+        </div>
+      </section>
 
       <section class="world-explorer" id="worlds-view" data-app-view="worlds" hidden>
         <aside class="world-browser">
@@ -149,6 +159,6 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=20260831-3" defer></script>
+  <script src="/app.js?v=20260901-1" defer></script>
 </body>
 </html>

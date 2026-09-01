@@ -21,10 +21,10 @@ private endpoint, model output, or experiment data._
 
 ## What it provides
 
-- trial launch and live progress from a browser;
+- trial launch, cross-experiment FIFO queuing, and live progress from a browser;
 - exact action, observation, response, reasoning, and compaction journals;
 - 3D replay plus synchronized model-observation views;
-- run statistics, room coverage, movement, and novelty charts;
+- corpus analytics plus per-run exploration, repetition, and collapse signals;
 - recontextualized forks from verified turn checkpoints;
 - selectable ASCII/JSON observations and optional generic context compaction;
 - managed or externally operated OpenAI-compatible model endpoints;

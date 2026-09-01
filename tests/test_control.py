@@ -1,6 +1,7 @@
 import hashlib
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -59,6 +60,8 @@ class ControlStateTest(unittest.TestCase):
             self.assertEqual(capabilities["observation_modes"][1]["id"], "json")
             self.assertEqual(capabilities["representation_contract_version"], 2)
             self.assertEqual(capabilities["benchmark_contract_status"], "passed")
+            self.assertTrue(capabilities["trial_queue"])
+            self.assertTrue(capabilities["queued_job_cancel"])
             self.assertIn(
                 "You are controlling a 3D grid game",
                 capabilities["system_prompts"]["ascii_hidden"],
@@ -107,6 +110,100 @@ class ControlStateTest(unittest.TestCase):
             self.assertEqual([item["sampling_seed"] for item in configs], [7, 8, 9])
             self.assertEqual(len({item["experiment_id"] for item in configs}), 1)
             self.assertEqual(len(job["run_ids"]), 3)
+
+    def test_new_experiments_join_one_global_fifo_queue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ControlState(Path(directory), Path(directory) / "runs")
+            with patch("mblab.control.threading.Thread"):
+                first = state.start_trial({"actions": 5, "repetitions": 2})
+                second = state.start_trial({"actions": 5})
+
+            jobs = list(state.jobs.values())
+            self.assertEqual(len(jobs), 3)
+            self.assertEqual([job["queue_position"] for job in jobs], [1, 2, 3])
+            self.assertEqual(state.trial_queue, [job["id"] for job in jobs])
+            self.assertNotEqual(jobs[0]["experiment_id"], jobs[2]["experiment_id"])
+            self.assertEqual(first["queue_position"], 1)
+            self.assertEqual(second["queue_position"], 3)
+
+    def test_dequeue_one_run_preserves_its_queued_siblings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = ControlState(Path(directory), Path(directory) / "runs")
+            with patch("mblab.control.threading.Thread"):
+                state.start_trial({"actions": 5, "repetitions": 3})
+            jobs = list(state.jobs.values())
+
+            removed = state.dequeue_job(jobs[1]["id"])
+
+            self.assertEqual(removed["status"], "cancelled")
+            self.assertEqual(jobs[0]["queue_position"], 1)
+            self.assertIsNone(jobs[1]["queue_position"])
+            self.assertEqual(jobs[2]["queue_position"], 2)
+            self.assertEqual(jobs[0]["status"], "queued")
+            self.assertEqual(jobs[2]["status"], "queued")
+
+    def test_dequeue_experiment_leaves_running_trial_alone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = ControlState(root, root / "runs")
+            first = state._new_job("trial", "run-batch-r01")
+            second = state._new_job("trial", "run-batch-r02")
+            for job in (first, second):
+                job["experiment_id"] = "experiment-batch"
+            first["status"] = "running"
+            state.active_trial_job_id = first["id"]
+            state.trial_queue.append(second["id"])
+            state._refresh_trial_queue_positions_locked()
+
+            result = state.dequeue_experiment("experiment-batch")
+
+            self.assertEqual(result["cancelled"], 1)
+            self.assertEqual(first["status"], "running")
+            self.assertEqual(second["status"], "cancelled")
+            self.assertEqual(state.trial_queue, [])
+
+    def test_trial_workers_execute_in_fifo_order_without_overlap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = ControlState(root, root / "runs")
+            first = state._new_job("trial", "run-first")
+            second = state._new_job("trial", "run-second")
+            state.trial_queue.extend([first["id"], second["id"]])
+            state._refresh_trial_queue_positions_locked()
+            first_started = threading.Event()
+            second_started = threading.Event()
+            release_first = threading.Event()
+            order = []
+
+            def execute(job_id, _config):
+                order.append(job_id)
+                if job_id == first["id"]:
+                    first_started.set()
+                    self.assertTrue(release_first.wait(1))
+                else:
+                    second_started.set()
+                with state.lock:
+                    state.jobs[job_id]["status"] = "completed"
+
+            with patch.object(state, "_execute_trial_worker", side_effect=execute):
+                first_thread = threading.Thread(
+                    target=state._trial_worker, args=(first["id"], {})
+                )
+                second_thread = threading.Thread(
+                    target=state._trial_worker, args=(second["id"], {})
+                )
+                first_thread.start()
+                self.assertTrue(first_started.wait(1))
+                second_thread.start()
+                self.assertFalse(second_started.wait(0.05))
+                release_first.set()
+                first_thread.join(1)
+                second_thread.join(1)
+
+            self.assertFalse(first_thread.is_alive())
+            self.assertFalse(second_thread.is_alive())
+            self.assertEqual(order, [first["id"], second["id"]])
+            self.assertIsNone(state.active_trial_job_id)
 
     def test_stopping_one_batch_job_cancels_queued_siblings(self):
         with tempfile.TemporaryDirectory() as directory:

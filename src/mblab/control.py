@@ -172,6 +172,9 @@ class ControlState:
         self.store = RunStore(runs_root)
         self.jobs: dict[str, dict[str, Any]] = {}
         self.lock = threading.RLock()
+        self.trial_condition = threading.Condition(self.lock)
+        self.trial_queue: list[str] = []
+        self.active_trial_job_id: str | None = None
         self.viewer_lock = threading.Lock()
         runtime = official_runtime_root()
         self.replay_script = runtime / "scripts" / "maze-export-replay.js"
@@ -370,6 +373,8 @@ class ControlState:
             "world_browser": True,
             "room_builder": True,
             "experiment_batch_delete": True,
+            "trial_queue": True,
+            "queued_job_cancel": True,
             "model_profiles": [
                 public_model_profile(profile)
                 for profile in self.model_profiles.values()
@@ -551,13 +556,6 @@ class ControlState:
                 system_prompt=run_system_prompt,
             )
 
-        with self.lock:
-            if any(
-                job["kind"] == "trial" and job["status"] in {"queued", "running", "stopping"}
-                for job in self.jobs.values()
-            ):
-                raise ValueError("a trial batch is already active; stop it or wait for it to finish")
-
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         identity_label = (
             "literal"
@@ -573,11 +571,27 @@ class ControlState:
                 f"official-{observation_mode}-{identity_label}"
             )
         )
-        with self.lock:
+        with self.trial_condition:
             experiment_id = f"experiment-{stamp}-{suffix}"
+            occupied_experiments = {
+                str(job.get("experiment_id"))
+                for job in self.jobs.values()
+                if job.get("experiment_id")
+            }
+            experiment_counter = 2
+            while experiment_id in occupied_experiments:
+                experiment_id = (
+                    f"experiment-{stamp}-{suffix}-{experiment_counter}"
+                )
+                experiment_counter += 1
             jobs: list[dict[str, Any]] = []
             configs: list[dict[str, Any]] = []
             planned_ids: set[str] = set()
+            occupied_run_ids = {
+                str(job.get("run_id"))
+                for job in self.jobs.values()
+                if job.get("run_id")
+            }
             worker_config = {
                 "actions": actions,
                 "temperature": temperature,
@@ -620,7 +634,11 @@ class ControlState:
                 repeat_suffix = f"-r{repeat_index:02d}" if repetitions > 1 else ""
                 run_id = f"run-{stamp}-{suffix}{repeat_suffix}"
                 counter = 2
-                while self.store.path_for(run_id).exists() or run_id in planned_ids:
+                while (
+                    self.store.path_for(run_id).exists()
+                    or run_id in planned_ids
+                    or run_id in occupied_run_ids
+                ):
                     run_id = f"run-{stamp}-{suffix}{repeat_suffix}-{counter}"
                     counter += 1
                 planned_ids.add(run_id)
@@ -643,6 +661,8 @@ class ControlState:
                 }
                 jobs.append(job)
                 configs.append(repeat_config)
+            self.trial_queue.extend(job["id"] for job in jobs)
+            self._refresh_trial_queue_positions_locked()
             thread = threading.Thread(
                 target=self._trial_worker if repetitions == 1 else self._trial_batch_worker,
                 args=(
@@ -670,8 +690,76 @@ class ControlState:
             self._trial_worker(job_id, config)
 
     def _trial_worker(self, job_id: str, config: dict[str, Any]) -> None:
+        """Wait for the global FIFO slot, then execute one isolated trial."""
+
+        if not self._await_trial_turn(job_id):
+            return
+        try:
+            self._execute_trial_worker(job_id, config)
+        except Exception as exc:
+            with self.lock:
+                self.jobs[job_id].update(
+                    status="failed",
+                    phase="finished",
+                    ended_at=utc_now(),
+                    error=str(exc),
+                )
+        finally:
+            with self.trial_condition:
+                if self.active_trial_job_id == job_id:
+                    self.active_trial_job_id = None
+                self._refresh_trial_queue_positions_locked()
+                self.trial_condition.notify_all()
+
+    def _refresh_trial_queue_positions_locked(self) -> None:
+        pending = [
+            job_id
+            for job_id in self.trial_queue
+            if (job := self.jobs.get(job_id))
+            and job.get("kind") == "trial"
+            and job.get("status") == "queued"
+        ]
+        self.trial_queue = pending
+        for job in self.jobs.values():
+            if job.get("kind") == "trial":
+                job["queue_position"] = None
+        for position, job_id in enumerate(pending, start=1):
+            self.jobs[job_id]["queue_position"] = position
+
+    def _await_trial_turn(self, job_id: str) -> bool:
+        with self.trial_condition:
+            while True:
+                self._refresh_trial_queue_positions_locked()
+                job = self.jobs.get(job_id)
+                if not job or job.get("status") != "queued":
+                    return False
+                if (
+                    self.active_trial_job_id is None
+                    and self.trial_queue
+                    and self.trial_queue[0] == job_id
+                ):
+                    self.trial_queue.pop(0)
+                    self.active_trial_job_id = job_id
+                    job.update(
+                        status="running",
+                        phase="preparing",
+                        started_at=utc_now(),
+                        queue_position=None,
+                    )
+                    self._refresh_trial_queue_positions_locked()
+                    return True
+                self.trial_condition.wait()
+
+    def _execute_trial_worker(self, job_id: str, config: dict[str, Any]) -> None:
         with self.lock:
             job = self.jobs[job_id]
+            if job.get("status") == "stopping":
+                job.update(
+                    status="cancelled",
+                    phase="finished",
+                    ended_at=utc_now(),
+                )
+                return
             job.update(status="running", started_at=utc_now())
         run_id = job["run_id"]
         run_dir = self.store.path_for(run_id)
@@ -1058,7 +1146,51 @@ class ControlState:
                         process.terminate()
                 continue
             counts["already_finished"] += 1
+        self._refresh_trial_queue_positions_locked()
+        self.trial_condition.notify_all()
         return counts
+
+    def dequeue_job(self, job_id: str) -> dict[str, Any]:
+        """Cancel one pending run without affecting its batch siblings."""
+
+        with self.trial_condition:
+            job = self.jobs.get(job_id)
+            if not job:
+                raise FileNotFoundError(job_id)
+            if job.get("kind") != "trial" or job.get("status") != "queued":
+                raise ValueError("only a queued trial can be removed from the queue")
+            job.update(status="cancelled", ended_at=utc_now(), queue_position=None)
+            self._refresh_trial_queue_positions_locked()
+            self.trial_condition.notify_all()
+            return public_job(job)
+
+    def dequeue_experiment(self, experiment_id: str) -> dict[str, Any]:
+        """Cancel only pending repetitions, leaving a running sibling alone."""
+
+        experiment_id = str(experiment_id or "").strip()
+        if not RUN_ID.fullmatch(experiment_id):
+            raise ValueError("invalid experiment id")
+        with self.trial_condition:
+            jobs = [
+                candidate
+                for candidate in self.jobs.values()
+                if candidate.get("kind") == "trial"
+                and candidate.get("experiment_id") == experiment_id
+            ]
+            if not jobs:
+                raise FileNotFoundError(experiment_id)
+            queued = [job for job in jobs if job.get("status") == "queued"]
+            if not queued:
+                raise ValueError("this experiment has no queued trials to remove")
+            for job in queued:
+                job.update(status="cancelled", ended_at=utc_now(), queue_position=None)
+            self._refresh_trial_queue_positions_locked()
+            self.trial_condition.notify_all()
+            return {
+                "dequeued_experiment": experiment_id,
+                "cancelled": len(queued),
+                "jobs": [public_job(job) for job in jobs],
+            }
 
     def stop_experiment(self, experiment_id: str) -> dict[str, Any]:
         """Stop every queued or running repetition in an experiment batch."""
@@ -1100,7 +1232,15 @@ class ControlState:
 
     def shutdown(self) -> None:
         """Stop only child processes launched by this control-center process."""
-        with self.lock:
+        with self.trial_condition:
+            self._stop_jobs(
+                [
+                    job
+                    for job in self.jobs.values()
+                    if job.get("kind") == "trial"
+                    and job.get("status") in {"queued", "running", "stopping"}
+                ]
+            )
             processes = [
                 process
                 for job in self.jobs.values()
@@ -1319,6 +1459,16 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         try:
             parts = [urllib.parse.unquote(part) for part in path.split("/") if part]
+            if len(parts) == 3 and parts[:2] == ["api", "jobs"]:
+                self.json_response(self.state.dequeue_job(parts[2]))
+                return
+            if (
+                len(parts) == 4
+                and parts[:2] == ["api", "experiments"]
+                and parts[3] == "queue"
+            ):
+                self.json_response(self.state.dequeue_experiment(parts[2]))
+                return
             if len(parts) == 3 and parts[:2] == ["api", "runs"]:
                 self.json_response(self.state.delete_run(parts[2]))
                 return
